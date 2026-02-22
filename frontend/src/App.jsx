@@ -5,9 +5,10 @@ import {
 } from "recharts";
 
 // ── CONFIG — replace with your actual URLs ──────────────────
-const BACKEND_URL  = "https://YOUR_BACKEND_URL";
-const CAM_STREAM_URL = "http://YOUR_ESP32CAM_IP/stream";
-const CAM_SNAP_URL   = "http://YOUR_ESP32CAM_IP/snapshot";
+const BACKEND_URL  = "https://pl-kp57.onrender.com";
+const CAM_STREAM_URL = "http://172.31.63.50/stream";
+const CAM_SNAP_URL   = "http://172.31.63.50/snapshot";
+
 
 // Supabase (for realtime)
 const SUPABASE_URL  = "https://YOUR_PROJECT.supabase.co";
