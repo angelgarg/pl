@@ -6,14 +6,13 @@ import {
 
 // ── CONFIG — replace with your actual URLs ──────────────────
 const BACKEND_URL  = "https://pl-kp57.onrender.com";
-const CAM_STREAM_URL = "http://172.31.63.50/stream";
-const CAM_SNAP_URL   = "http://172.31.63.50/snapshot";
 
+const CAM_STREAM_URL = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/stream";
+const CAM_SNAP_URL   = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/snapshot";
 
 // Supabase (for realtime)
 const SUPABASE_URL  = "https://YOUR_PROJECT.supabase.co";
 const SUPABASE_ANON = "YOUR_ANON_KEY";
-
 // ── Helpers ─────────────────────────────────────────────────
 function formatTime(iso) {
   const d = new Date(iso);
