@@ -208,6 +208,50 @@ Respond ONLY with valid JSON:
 }
 
 // ============================================================
+// GET /api/readings?limit=24
+// ============================================================
+app.get("/api/readings", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 24, 100);
+
+  try {
+    const { data, error } = await supabase
+      .from("sensor_readings")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) throw new Error(error.message);
+
+    res.json(data);
+  } catch (err) {
+    console.error("Readings fetch error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// GET /api/pump-events?limit=50
+// ============================================================
+app.get("/api/pump-events", async (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit) || 50, 200);
+
+  try {
+    const { data, error } = await supabase
+      .from("pump_events")
+      .select("*")
+      .order("created_at", { ascending: false })
+      .limit(limit);
+
+    if (error) throw new Error(error.message);
+
+    res.json(data);
+  } catch (err) {
+    console.error("Pump events fetch error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
 // HEALTH CHECK
 // ============================================================
 app.get("/health", (_, res) =>
