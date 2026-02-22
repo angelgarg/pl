@@ -7,8 +7,9 @@ import {
 // ── CONFIG — replace with your actual URLs ──────────────────
 const BACKEND_URL  = "https://pl-kp57.onrender.com";
 
-const CAM_STREAM_URL = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/stream";
-const CAM_SNAP_URL   = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/snapshot";
+const CAM_STREAM_URL = import.meta.env.VITE_CAM_STREAM_URL;
+const CAM_SNAP_URL = import.meta.env.VITE_CAM_SNAP_URL;
+//const CAM_SNAP_URL   = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/snapshot";
 
 // Supabase (for realtime)
 const SUPABASE_URL  = "https://YOUR_PROJECT.supabase.co";
