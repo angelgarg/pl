@@ -23,7 +23,14 @@ require('dotenv').config();
 const express    = require('express');
 const cors       = require('cors');
 const { createClient } = require('@supabase/supabase-js');
-const OpenAI     = require('openai');
+const { AzureOpenAI } = require("openai");
+
+const openai = new AzureOpenAI({
+  apiKey: process.env.AZURE_OPENAI_KEY,
+  endpoint: process.env.AZURE_OPENAI_ENDPOINT,
+  apiVersion: process.env.AZURE_OPENAI_API_VERSION,
+  deployment: process.env.AZURE_OPENAI_DEPLOYMENT,
+});
 
 const app  = express();
 const PORT = process.env.PORT || 3001;
@@ -221,56 +228,53 @@ app.get('/health', (_, res) => res.json({ status: 'ok', ts: new Date() }));
 //  OPENAI HELPER — decides whether to turn pump on
 // ─────────────────────────────────────────────────────────────
 async function getAIDecision(moisturePct, snapshotUrl, imageB64) {
-  const systemPrompt = `You are an expert plant care AI assistant integrated into an IoT plant monitoring system.
+  const systemPrompt = `You are an expert plant care AI integrated into an IoT plant monitoring system.
 You receive soil moisture data and optionally a camera image of the plant.
-Your job is to decide whether to turn on the water pump RIGHT NOW.
+Decide whether to turn on the water pump RIGHT NOW.
 
 Guidelines:
-- Soil moisture below 30% → almost always water
-- Soil moisture 30-50% → water only if plant looks wilted or stressed in image
-- Soil moisture above 50% → do NOT water (risk of root rot)
-- Consider visual cues from the image: wilting, yellowing, dry soil surface
-- Be conservative: overwatering kills plants faster than underwatering
+- Below 30% → almost always water
+- 30-50% → water only if plant looks stressed in image
+- Above 50% → do NOT water (risk of root rot)
 
-ALWAYS respond with ONLY a JSON object in this exact format:
+ALWAYS respond with ONLY a JSON object, no markdown, no backticks:
 {"pump": true/false, "reason": "brief 1-sentence explanation"}`;
 
-  const userContent = [];
+  const userContent = [
+    {
+      type: 'text',
+      text: `Current soil moisture: ${moisturePct}%. Should I water the plant now?`
+    }
+  ];
 
-  // Always include moisture data as text
-  userContent.push({
-    type: 'text',
-    text: `Current soil moisture level: ${moisturePct}%. Should I water the plant now?`,
-  });
-
-  // Include image if available (vision model)
+  // Add image if available
   if (imageB64) {
     userContent.push({
       type: 'image_url',
       image_url: {
         url: `data:image/jpeg;base64,${imageB64}`,
-        detail: 'low',  // low detail = cheaper, faster, sufficient for plant health
-      },
+        detail: 'low'
+      }
     });
   } else if (snapshotUrl) {
     userContent.push({
       type: 'image_url',
-      image_url: { url: snapshotUrl, detail: 'low' },
+      image_url: { url: snapshotUrl, detail: 'low' }
     });
   }
 
   const response = await openai.chat.completions.create({
-    model:       'gpt-4o',
+    model:       process.env.AZURE_OPENAI_DEPLOYMENT,  // Azure uses deployment name as model
     max_tokens:  150,
-    temperature: 0.3,  // Low temperature = consistent, predictable decisions
+    temperature: 0.3,
     messages: [
       { role: 'system', content: systemPrompt },
-      { role: 'user',   content: userContent },
+      { role: 'user',   content: userContent  }
     ],
-    response_format: { type: 'json_object' },
+    response_format: { type: 'json_object' }
   });
 
-  const raw  = response.choices[0].message.content;
+  const raw    = response.choices[0].message.content.trim();
   const parsed = JSON.parse(raw);
 
   return {
@@ -279,12 +283,12 @@ ALWAYS respond with ONLY a JSON object in this exact format:
     raw:    parsed,
   };
 }
-
 // ─────────────────────────────────────────────────────────────
 //  START SERVER
 // ─────────────────────────────────────────────────────────────
 app.listen(PORT, () => {
   console.log(`\n🌿 Plant Monitor Backend running on port ${PORT}`);
   console.log(`   Supabase: ${process.env.SUPABASE_URL}`);
-  console.log(`   OpenAI model: gpt-4o`);
+  console.log(`   Azure OpenAI endpoint: ${process.env.AZURE_OPENAI_ENDPOINT}`);
+console.log(`   Deployment: ${process.env.AZURE_OPENAI_DEPLOYMENT}`);
 });
