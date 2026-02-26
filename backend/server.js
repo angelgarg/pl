@@ -8,6 +8,9 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
+const multer = require("multer");
+const fs = require("fs");
+const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 const { AzureOpenAI } = require("openai");
 
@@ -31,6 +34,12 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "15mb" }));
 
 // ─────────────────────────────────────────────
+// Multer + uploads folder
+// ─────────────────────────────────────────────
+const upload = multer({ dest: "uploads/" });
+if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
+
+// ─────────────────────────────────────────────
 // Supabase Client (service_role key required)
 // ─────────────────────────────────────────────
 const supabase = createClient(
@@ -48,6 +57,53 @@ function requireApiSecret(req, res, next) {
   }
   next();
 }
+
+// ============================================================
+// POST /upload  ← ESP32-CAM pushes raw JPEG here
+// ============================================================
+app.post("/upload", (req, res) => {
+  const contentType = req.headers["content-type"] || "";
+  const dest = path.join("uploads", "latest.jpg");
+
+  // Raw JPEG from ESP32-CAM
+  if (contentType.includes("image/jpeg")) {
+    const chunks = [];
+    req.on("data", (chunk) => chunks.push(chunk));
+    req.on("end", () => {
+      const imgBuffer = Buffer.concat(chunks);
+      fs.writeFileSync(dest, imgBuffer);
+      console.log(`📷 New image uploaded: ${imgBuffer.length} bytes`);
+      res.json({ status: "ok", size: imgBuffer.length });
+    });
+    req.on("error", (err) => res.status(500).json({ error: err.message }));
+
+  // Multipart fallback
+  } else {
+    upload.single("image")(req, res, (err) => {
+      if (err || !req.file)
+        return res.status(400).json({ error: "No image received" });
+      fs.renameSync(req.file.path, dest);
+      console.log(`📷 Multipart image uploaded: ${req.file.size} bytes`);
+      res.json({ status: "ok", size: req.file.size });
+    });
+  }
+});
+
+// ============================================================
+// GET /latest.jpg  ← Dashboard fetches latest snapshot
+// ============================================================
+app.get("/latest.jpg", (req, res) => {
+  const imgPath = path.join(process.cwd(), "uploads", "latest.jpg");
+
+  if (!fs.existsSync(imgPath)) {
+    return res.status(404).json({ error: "No image uploaded yet" });
+  }
+
+  res.setHeader("Content-Type", "image/jpeg");
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+  res.sendFile(imgPath);
+});
 
 // ============================================================
 // POST /api/sensor-data
@@ -247,6 +303,31 @@ app.get("/api/pump-events", async (req, res) => {
     res.json(data);
   } catch (err) {
     console.error("Pump events fetch error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// POST /api/pump-override
+// ============================================================
+app.post("/api/pump-override", async (req, res) => {
+  const { pump_on } = req.body;
+  if (typeof pump_on !== "boolean") {
+    return res.status(400).json({ error: "pump_on (boolean) required" });
+  }
+
+  console.log(`🔧 Manual override — pump: ${pump_on ? "ON" : "OFF"}`);
+
+  try {
+    const { error } = await supabase.from("pump_events").insert({
+      pump_on,
+      trigger_source: "manual",
+      duration_sec: pump_on ? null : 0,
+    });
+
+    if (error) throw new Error(error.message);
+    res.json({ success: true, pump_on });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
