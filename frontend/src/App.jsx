@@ -1,20 +1,14 @@
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
   Tooltip, ResponsiveContainer, ReferenceLine
 } from "recharts";
 
-// ── CONFIG — replace with your actual URLs ──────────────────
+// ── CONFIG ───────────────────────────────────────────────────
 const BACKEND_URL  = "https://pl-kp57.onrender.com";
+const CAM_SNAP_URL = `${BACKEND_URL}/latest.jpg`;
 
-const CAM_STREAM_URL = import.meta.env.VITE_CAM_STREAM_URL;
-const CAM_SNAP_URL = import.meta.env.VITE_CAM_SNAP_URL;
-//const CAM_SNAP_URL   = "https://balkiest-sarina-nonceremonially.ngrok-free.dev/snapshot";
-
-// Supabase (for realtime)
-const SUPABASE_URL  = "https://YOUR_PROJECT.supabase.co";
-const SUPABASE_ANON = "YOUR_ANON_KEY";
-// ── Helpers ─────────────────────────────────────────────────
+// ── Helpers ──────────────────────────────────────────────────
 function formatTime(iso) {
   const d = new Date(iso);
   return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -24,7 +18,7 @@ function formatDate(iso) {
   return d.toLocaleDateString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-// ── Moisture gauge component ─────────────────────────────────
+// ── Moisture gauge ───────────────────────────────────────────
 function MoistureGauge({ pct }) {
   const angle = -135 + (pct / 100) * 270;
   const color =
@@ -35,13 +29,11 @@ function MoistureGauge({ pct }) {
   return (
     <div className="flex flex-col items-center">
       <svg width="180" height="120" viewBox="0 0 180 120">
-        {/* Track arc */}
         <path
           d="M 20 105 A 70 70 0 1 1 160 105"
           fill="none" stroke="#1e293b" strokeWidth="14"
           strokeLinecap="round"
         />
-        {/* Color fill arc — computed via stroke-dasharray trick */}
         <path
           d="M 20 105 A 70 70 0 1 1 160 105"
           fill="none"
@@ -51,7 +43,6 @@ function MoistureGauge({ pct }) {
           strokeDasharray={`${(pct / 100) * 220} 220`}
           style={{ transition: "stroke-dasharray 1s ease, stroke 0.5s" }}
         />
-        {/* Needle */}
         <g transform={`rotate(${angle}, 90, 105)`}>
           <line x1="90" y1="105" x2="90" y2="44"
             stroke={color} strokeWidth="3" strokeLinecap="round"
@@ -59,7 +50,6 @@ function MoistureGauge({ pct }) {
           />
           <circle cx="90" cy="105" r="5" fill={color} />
         </g>
-        {/* Labels */}
         <text x="14" y="120" fill="#64748b" fontSize="11">0%</text>
         <text x="152" y="120" fill="#64748b" fontSize="11">100%</text>
       </svg>
@@ -73,7 +63,7 @@ function MoistureGauge({ pct }) {
   );
 }
 
-// ── Custom chart tooltip ─────────────────────────────────────
+// ── Chart tooltip ─────────────────────────────────────────────
 function ChartTooltip({ active, payload, label }) {
   if (!active || !payload?.length) return null;
   const d = payload[0].payload;
@@ -100,14 +90,12 @@ export default function PlantMonitor() {
   const [readings,    setReadings]    = useState([]);
   const [pumpEvents,  setPumpEvents]  = useState([]);
   const [latest,      setLatest]      = useState(null);
-  const [camMode,     setCamMode]     = useState("stream"); // "stream" | "snap"
   const [camError,    setCamError]    = useState(false);
+  const [camKey,      setCamKey]      = useState(Date.now()); // forces image refresh
   const [pumpLoading, setPumpLoading] = useState(false);
   const [toast,       setToast]       = useState(null);
 
-  const imgRef = useRef(null);
-
-  // ── Fetch data ─────────────────────────────────────────────
+  // ── Fetch sensor data ────────────────────────────────────────
   const fetchData = useCallback(async () => {
     try {
       const [rRes, pRes] = await Promise.all([
@@ -116,7 +104,6 @@ export default function PlantMonitor() {
       ]);
       const rData = await rRes.json();
       const pData = await pRes.json();
-      // readings come newest-first; chart wants oldest-first
       setReadings([...rData].reverse());
       setPumpEvents(pData);
       if (rData.length > 0) setLatest(rData[0]);
@@ -127,11 +114,18 @@ export default function PlantMonitor() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000); // refresh every minute
-    return () => clearInterval(interval);
+    const dataInterval = setInterval(fetchData, 60000);      // refresh data every 1 min
+    const camInterval  = setInterval(() => {
+      setCamError(false);
+      setCamKey(Date.now());                                  // reload image every 30 min
+    }, 30 * 60 * 1000);
+    return () => {
+      clearInterval(dataInterval);
+      clearInterval(camInterval);
+    };
   }, [fetchData]);
 
-  // ── Manual pump override ────────────────────────────────────
+  // ── Manual pump override ─────────────────────────────────────
   const triggerPump = async (on) => {
     setPumpLoading(true);
     try {
@@ -162,8 +156,8 @@ export default function PlantMonitor() {
 
   const moistureStatus =
     currentMoisture < 25 ? "CRITICALLY DRY" :
-    currentMoisture < 50 ? "SLIGHTLY DRY" :
-    currentMoisture < 75 ? "OPTIMAL" : "WELL WATERED";
+    currentMoisture < 50 ? "SLIGHTLY DRY"   :
+    currentMoisture < 75 ? "OPTIMAL"         : "WELL WATERED";
 
   const styles = {
     app: {
@@ -182,139 +176,84 @@ export default function PlantMonitor() {
       justifyContent: "space-between",
     },
     headerTitle: {
-      fontSize: 20,
-      fontWeight: 700,
-      color: "#22c55e",
-      letterSpacing: 2,
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
+      fontSize: 20, fontWeight: 700, color: "#22c55e",
+      letterSpacing: 2, display: "flex", alignItems: "center", gap: 10,
     },
     headerSub: { color: "#475569", fontSize: 11, marginTop: 2, letterSpacing: 1 },
     statusPill: {
       background: "#0a1f0a",
       border: `1px solid ${moistureColor}40`,
-      borderRadius: 20,
-      padding: "6px 16px",
-      fontSize: 11,
-      color: moistureColor,
-      letterSpacing: 2,
-      fontWeight: 700,
+      borderRadius: 20, padding: "6px 16px",
+      fontSize: 11, color: moistureColor, letterSpacing: 2, fontWeight: 700,
     },
     grid: {
       display: "grid",
       gridTemplateColumns: "1fr 1fr",
-      gridTemplateRows: "auto auto",
       gap: 20,
       maxWidth: 1200,
       margin: "24px auto",
       padding: "0 24px",
     },
     card: {
-      background: "#071422",
-      border: "1px solid #0f2a3d",
-      borderRadius: 16,
-      padding: 24,
-      position: "relative",
-      overflow: "hidden",
+      background: "#071422", border: "1px solid #0f2a3d",
+      borderRadius: 16, padding: 24,
+      position: "relative", overflow: "hidden",
     },
     cardTitle: {
-      fontSize: 10,
-      color: "#475569",
-      letterSpacing: 3,
-      fontWeight: 700,
-      marginBottom: 16,
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
+      fontSize: 10, color: "#475569", letterSpacing: 3,
+      fontWeight: 700, marginBottom: 16,
+      display: "flex", alignItems: "center", gap: 8,
     },
-    // Camera card spans full width
     cameraCard: {
       gridColumn: "1 / -1",
-      background: "#071422",
-      border: "1px solid #0f2a3d",
-      borderRadius: 16,
-      padding: 20,
-      overflow: "hidden",
+      background: "#071422", border: "1px solid #0f2a3d",
+      borderRadius: 16, padding: 20, overflow: "hidden",
     },
     camFrame: {
-      width: "100%",
-      maxHeight: 360,
-      objectFit: "cover",
-      borderRadius: 10,
-      background: "#000",
-      display: "block",
+      width: "100%", maxHeight: 360,
+      objectFit: "cover", borderRadius: 10,
+      background: "#000", display: "block",
     },
-    camToggle: {
-      display: "flex",
-      gap: 8,
-      marginBottom: 12,
-    },
-    tabBtn: (active) => ({
-      background: active ? "#22c55e20" : "transparent",
-      border: `1px solid ${active ? "#22c55e" : "#1e3a4a"}`,
-      color: active ? "#22c55e" : "#475569",
-      borderRadius: 6,
-      padding: "5px 14px",
-      fontSize: 11,
-      cursor: "pointer",
-      letterSpacing: 1,
-      fontFamily: "inherit",
-    }),
     pumpBtn: (on) => ({
       background: on
         ? "linear-gradient(135deg, #1d4ed8 0%, #2563eb 100%)"
         : "linear-gradient(135deg, #ef444420 0%, #ef444430 100%)",
       border: `1px solid ${on ? "#3b82f6" : "#ef4444"}`,
       color: on ? "#93c5fd" : "#fca5a5",
-      borderRadius: 10,
-      padding: "12px 24px",
-      fontSize: 12,
-      cursor: "pointer",
-      letterSpacing: 1,
-      fontFamily: "inherit",
-      fontWeight: 700,
-      flex: 1,
-      transition: "all 0.2s",
-      opacity: pumpLoading ? 0.5 : 1,
+      borderRadius: 10, padding: "12px 24px",
+      fontSize: 12, cursor: "pointer", letterSpacing: 1,
+      fontFamily: "inherit", fontWeight: 700, flex: 1,
+      transition: "all 0.2s", opacity: pumpLoading ? 0.5 : 1,
     }),
+    retryBtn: {
+      background: "transparent", border: "1px solid #1e3a4a",
+      color: "#475569", borderRadius: 6, padding: "5px 14px",
+      fontSize: 11, cursor: "pointer", letterSpacing: 1,
+      fontFamily: "inherit", marginTop: 8,
+    },
     eventRow: {
-      display: "flex",
-      alignItems: "center",
-      gap: 10,
-      padding: "10px 0",
-      borderBottom: "1px solid #0f2a3d",
-      fontSize: 12,
+      display: "flex", alignItems: "center", gap: 10,
+      padding: "10px 0", borderBottom: "1px solid #0f2a3d", fontSize: 12,
     },
     eventIcon: (on, manual) => ({
       width: 32, height: 32, borderRadius: 8,
-      background: on
-        ? (manual ? "#7c3aed20" : "#1d4ed820")
-        : "#ef444420",
+      background: on ? (manual ? "#7c3aed20" : "#1d4ed820") : "#ef444420",
       border: `1px solid ${on ? (manual ? "#7c3aed" : "#3b82f6") : "#ef4444"}40`,
       display: "flex", alignItems: "center", justifyContent: "center",
       fontSize: 14, flexShrink: 0,
     }),
     toast: {
-      position: "fixed",
-      bottom: 32,
-      left: "50%",
+      position: "fixed", bottom: 32, left: "50%",
       transform: "translateX(-50%)",
-      background: "#0f172a",
-      border: "1px solid #334155",
-      borderRadius: 12,
-      padding: "12px 24px",
-      fontSize: 13,
-      color: "#e2e8f0",
-      zIndex: 999,
-      boxShadow: "0 20px 60px rgba(0,0,0,0.5)",
-      whiteSpace: "nowrap",
+      background: "#0f172a", border: "1px solid #334155",
+      borderRadius: 12, padding: "12px 24px",
+      fontSize: 13, color: "#e2e8f0", zIndex: 999,
+      boxShadow: "0 20px 60px rgba(0,0,0,0.5)", whiteSpace: "nowrap",
     },
   };
 
   return (
     <div style={styles.app}>
-      {/* Google Font */}
       <link
         href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&display=swap"
         rel="stylesheet"
@@ -326,92 +265,71 @@ export default function PlantMonitor() {
           <div style={styles.headerTitle}>
             <span>🌿</span> PLANT MONITOR
           </div>
-          <div style={styles.headerSub}>IoT • ESP32-S3 • ESP32-CAM • GPT-4o • Supabase</div>
+          <div style={styles.headerSub}>IoT • ESP32-S3 • ESP32-CAM • Azure GPT-4o • Supabase</div>
         </div>
         <div style={styles.statusPill}>{moistureStatus}</div>
       </div>
 
       <div style={styles.grid}>
 
-        {/* ── LIVE CAMERA ────────────────────────────────────── */}
+        {/* ── CAMERA ──────────────────────────────────────────── */}
         <div style={styles.cameraCard}>
           <div style={styles.cardTitle}>
-            <span>📷</span> LIVE CAMERA FEED
-            <span style={{ marginLeft: "auto", color: "#ef4444", fontSize: 9 }}>● LIVE</span>
-          </div>
-          <div style={styles.camToggle}>
-            <button style={styles.tabBtn(camMode === "stream")}
-              onClick={() => { setCamMode("stream"); setCamError(false); }}>
-              ▶ STREAM
-            </button>
-            <button style={styles.tabBtn(camMode === "snap")}
-              onClick={() => { setCamMode("snap"); setCamError(false); }}>
-              📷 SNAPSHOT
-            </button>
+            <span>📷</span> LATEST SNAPSHOT
+            <span style={{ marginLeft: "auto", color: "#475569", fontSize: 9 }}>
+              UPDATES EVERY 30 MIN
+            </span>
           </div>
 
           {camError ? (
             <div style={{
               ...styles.camFrame, height: 280,
-              display: "flex", alignItems: "center", justifyContent: "center",
-              color: "#475569", flexDirection: "column", gap: 8,
+              display: "flex", alignItems: "center",
+              justifyContent: "center", color: "#475569",
+              flexDirection: "column", gap: 8,
             }}>
               <span style={{ fontSize: 40 }}>📷</span>
-              <span style={{ fontSize: 12 }}>Camera offline or CORS issue</span>
+              <span style={{ fontSize: 12 }}>No image yet — waiting for ESP32-CAM</span>
               <span style={{ fontSize: 11, color: "#334155" }}>
-                Check that ESP32-CAM is on your network
+                Image uploads every 30 min automatically
               </span>
               <button
-                style={{ ...styles.tabBtn(false), marginTop: 8 }}
-                onClick={() => setCamError(false)}
+                style={styles.retryBtn}
+                onClick={() => { setCamError(false); setCamKey(Date.now()); }}
               >
                 RETRY
               </button>
             </div>
-          ) : camMode === "stream" ? (
-            <img
-              ref={imgRef}
-              src={CAM_STREAM_URL}
-              alt="Live plant feed"
-              style={styles.camFrame}
-              onError={() => setCamError(true)}
-            />
           ) : (
             <img
-              src={`${CAM_SNAP_URL}?t=${Date.now()}`}
-              alt="Plant snapshot"
+              key={camKey}
+              src={`${CAM_SNAP_URL}?t=${camKey}`}
+              alt="Latest plant snapshot"
               style={styles.camFrame}
               onError={() => setCamError(true)}
             />
           )}
 
-          {latest?.snapshot_url && (
-            <div style={{ marginTop: 10, fontSize: 11, color: "#334155" }}>
-              Last AI snapshot:{" "}
-              <a href={latest.snapshot_url} target="_blank" rel="noreferrer"
-                style={{ color: "#3b82f6" }}>
-                view ↗
-              </a>
-            </div>
-          )}
+          <div style={{ marginTop: 10, fontSize: 11, color: "#334155" }}>
+            Last sensor reading:{" "}
+            <span style={{ color: "#475569" }}>
+              {latest ? formatDate(latest.created_at) : "no data yet"}
+            </span>
+          </div>
         </div>
 
-        {/* ── MOISTURE GAUGE ─────────────────────────────────── */}
+        {/* ── MOISTURE GAUGE ───────────────────────────────────── */}
         <div style={styles.card}>
           <div style={styles.cardTitle}>
             <span>💧</span> CURRENT MOISTURE
           </div>
           <MoistureGauge pct={currentMoisture} />
 
-          {/* Last reading meta */}
           {latest && (
             <div style={{
-              marginTop: 16,
-              background: "#0a1f2e",
-              borderRadius: 10,
-              padding: "12px 16px",
-              fontSize: 11,
-              color: "#64748b",
+              marginTop: 16, background: "#0a1f2e",
+              borderRadius: 10, padding: "12px 16px",
+              fontSize: 11, color: "#64748b",
             }}>
               <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
                 <span>Last reading</span>
@@ -431,7 +349,6 @@ export default function PlantMonitor() {
             </div>
           )}
 
-          {/* Manual override */}
           <div style={{ marginTop: 20 }}>
             <div style={{ ...styles.cardTitle, marginBottom: 10 }}>
               <span>🔧</span> MANUAL PUMP CONTROL
@@ -458,7 +375,7 @@ export default function PlantMonitor() {
           </div>
         </div>
 
-        {/* ── MOISTURE CHART ──────────────────────────────────── */}
+        {/* ── MOISTURE CHART ───────────────────────────────────── */}
         <div style={styles.card}>
           <div style={styles.cardTitle}>
             <span>📈</span> MOISTURE HISTORY (LAST 24 READINGS)
@@ -478,9 +395,10 @@ export default function PlantMonitor() {
                 tick={{ fill: "#475569", fontSize: 10 }}
               />
               <Tooltip content={<ChartTooltip />} />
-              {/* Danger zones */}
-              <ReferenceLine y={25} stroke="#ef444440" strokeDasharray="4 4" label={{ value: "DRY", fill: "#ef4444", fontSize: 9 }} />
-              <ReferenceLine y={50} stroke="#f59e0b40" strokeDasharray="4 4" label={{ value: "OK", fill: "#f59e0b", fontSize: 9 }} />
+              <ReferenceLine y={25} stroke="#ef444440" strokeDasharray="4 4"
+                label={{ value: "DRY", fill: "#ef4444", fontSize: 9 }} />
+              <ReferenceLine y={50} stroke="#f59e0b40" strokeDasharray="4 4"
+                label={{ value: "OK", fill: "#f59e0b", fontSize: 9 }} />
               <Line
                 type="monotone"
                 dataKey="moisture_pct"
@@ -502,7 +420,7 @@ export default function PlantMonitor() {
           </div>
         </div>
 
-        {/* ── PUMP LOG ───────────────────────────────────────── */}
+        {/* ── PUMP LOG ─────────────────────────────────────────── */}
         <div style={{ ...styles.card, gridColumn: "1 / -1" }}>
           <div style={styles.cardTitle}>
             <span>📋</span> PUMP EVENT LOG
@@ -519,10 +437,7 @@ export default function PlantMonitor() {
                     {ev.pump_on ? "💧" : "🔌"}
                   </div>
                   <div style={{ flex: 1 }}>
-                    <div style={{
-                      color: ev.pump_on ? "#93c5fd" : "#94a3b8",
-                      fontWeight: 700, fontSize: 12,
-                    }}>
+                    <div style={{ color: ev.pump_on ? "#93c5fd" : "#94a3b8", fontWeight: 700, fontSize: 12 }}>
                       Pump {ev.pump_on ? "ON" : "OFF"}
                       {" "}
                       <span style={{
@@ -547,7 +462,6 @@ export default function PlantMonitor() {
 
       </div>
 
-      {/* Toast */}
       {toast && <div style={styles.toast}>{toast}</div>}
     </div>
   );
