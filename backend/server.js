@@ -8,9 +8,6 @@ require("dotenv").config();
 
 const express = require("express");
 const cors = require("cors");
-const multer = require("multer");
-const fs = require("fs");
-const path = require("path");
 const { createClient } = require("@supabase/supabase-js");
 const { AzureOpenAI } = require("openai");
 
@@ -34,12 +31,6 @@ app.use(cors({ origin: "*" }));
 app.use(express.json({ limit: "15mb" }));
 
 // ─────────────────────────────────────────────
-// Multer + uploads folder
-// ─────────────────────────────────────────────
-const upload = multer({ dest: "uploads/" });
-if (!fs.existsSync("uploads")) fs.mkdirSync("uploads");
-
-// ─────────────────────────────────────────────
 // Supabase Client (service_role key required)
 // ─────────────────────────────────────────────
 const supabase = createClient(
@@ -61,48 +52,50 @@ function requireApiSecret(req, res, next) {
 // ============================================================
 // POST /upload  ← ESP32-CAM pushes raw JPEG here
 // ============================================================
-app.post("/upload", (req, res) => {
+app.post("/upload", async (req, res) => {
   const contentType = req.headers["content-type"] || "";
-  const dest = path.join("uploads", "latest.jpg");
+  if (!contentType.includes("image/jpeg")) {
+    return res.status(400).json({ error: "Expected image/jpeg" });
+  }
 
-  // Raw JPEG from ESP32-CAM
-  if (contentType.includes("image/jpeg")) {
-    const chunks = [];
-    req.on("data", (chunk) => chunks.push(chunk));
-    req.on("end", () => {
+  const chunks = [];
+  req.on("data", (chunk) => chunks.push(chunk));
+  req.on("end", async () => {
+    try {
       const imgBuffer = Buffer.concat(chunks);
-      fs.writeFileSync(dest, imgBuffer);
+
+      // Always overwrite the same file — persists on Supabase forever
+      const { error } = await supabase.storage
+        .from("plant-snapshots")
+        .upload("latest.jpg", imgBuffer, {
+          contentType: "image/jpeg",
+          upsert: true,   // overwrites every time
+        });
+
+      if (error) throw new Error(error.message);
+
       console.log(`📷 New image uploaded: ${imgBuffer.length} bytes`);
       res.json({ status: "ok", size: imgBuffer.length });
-    });
-    req.on("error", (err) => res.status(500).json({ error: err.message }));
 
-  // Multipart fallback
-  } else {
-    upload.single("image")(req, res, (err) => {
-      if (err || !req.file)
-        return res.status(400).json({ error: "No image received" });
-      fs.renameSync(req.file.path, dest);
-      console.log(`📷 Multipart image uploaded: ${req.file.size} bytes`);
-      res.json({ status: "ok", size: req.file.size });
-    });
-  }
+    } catch (err) {
+      console.error("Upload error:", err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  req.on("error", (err) => res.status(500).json({ error: err.message }));
 });
 
 // ============================================================
-// GET /latest.jpg  ← Dashboard fetches latest snapshot
+// GET /latest.jpg  ← redirects to Supabase CDN public URL
 // ============================================================
 app.get("/latest.jpg", (req, res) => {
-  const imgPath = path.join(process.cwd(), "uploads", "latest.jpg");
+  const { data } = supabase.storage
+    .from("plant-snapshots")
+    .getPublicUrl("latest.jpg");
 
-  if (!fs.existsSync(imgPath)) {
-    return res.status(404).json({ error: "No image uploaded yet" });
-  }
-
-  res.setHeader("Content-Type", "image/jpeg");
   res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
-  res.sendFile(imgPath);
+  res.redirect(data.publicUrl);
 });
 
 // ============================================================
@@ -118,30 +111,12 @@ app.post("/api/sensor-data", requireApiSecret, async (req, res) => {
   console.log(`\n📥 Sensor data received — moisture: ${moisture_pct}%`);
 
   try {
-    // ── 1. Upload image if provided ───────────────────────────
-    let snapshotUrl = null;
-
-    if (image_b64 && image_b64.length > 100) {
-      const imgBuffer = Buffer.from(image_b64, "base64");
-      const fileName = `snapshot_${Date.now()}.jpg`;
-
-      const { error: uploadErr } = await supabase.storage
-        .from("plant-snapshots")
-        .upload(fileName, imgBuffer, {
-          contentType: "image/jpeg",
-          upsert: false,
-        });
-
-      if (uploadErr) {
-        console.error("Storage upload error:", uploadErr.message);
-      } else {
-        const { data } = supabase.storage
-          .from("plant-snapshots")
-          .getPublicUrl(fileName);
-        snapshotUrl = data.publicUrl;
-        console.log("📷 Snapshot uploaded:", snapshotUrl);
-      }
-    }
+    // ── 1. Reference latest.jpg already on Supabase ───────────
+    // CAM uploads separately via /upload — we just grab the URL
+    const { data: urlData } = supabase.storage
+      .from("plant-snapshots")
+      .getPublicUrl("latest.jpg");
+    const snapshotUrl = urlData.publicUrl;
 
     // ── 2. Insert reading ─────────────────────────────────────
     const { data: reading, error: readErr } = await supabase
@@ -153,11 +128,7 @@ app.post("/api/sensor-data", requireApiSecret, async (req, res) => {
     if (readErr) throw new Error(readErr.message);
 
     // ── 3. Ask Azure OpenAI ───────────────────────────────────
-    const aiResult = await getAIDecision(
-      moisture_pct,
-      snapshotUrl,
-      image_b64
-    );
+    const aiResult = await getAIDecision(moisture_pct, snapshotUrl, null);
 
     console.log(`🤖 AI → pump: ${aiResult.pump}, reason: ${aiResult.reason}`);
 
@@ -165,9 +136,9 @@ app.post("/api/sensor-data", requireApiSecret, async (req, res) => {
     const { data: decision, error: decErr } = await supabase
       .from("ai_decisions")
       .insert({
-        reading_id: reading.id,
-        pump_on: aiResult.pump,
-        reason: aiResult.reason,
+        reading_id:   reading.id,
+        pump_on:      aiResult.pump,
+        reason:       aiResult.reason,
         raw_response: aiResult.raw,
       })
       .select()
@@ -178,16 +149,16 @@ app.post("/api/sensor-data", requireApiSecret, async (req, res) => {
     // ── 5. Log pump event ─────────────────────────────────────
     if (aiResult.pump) {
       await supabase.from("pump_events").insert({
-        pump_on: true,
+        pump_on:        true,
         trigger_source: "auto",
-        duration_sec: 10,
-        decision_id: decision?.id,
+        duration_sec:   10,
+        decision_id:    decision?.id,
       });
     }
 
     // ── 6. Respond to ESP ─────────────────────────────────────
     res.json({
-      pump: aiResult.pump,
+      pump:   aiResult.pump,
       reason: aiResult.reason,
     });
 
@@ -240,7 +211,7 @@ Respond ONLY with valid JSON:
     model: process.env.AZURE_OPENAI_DEPLOYMENT,
     messages: [
       { role: "system", content: systemPrompt },
-      { role: "user", content: userContent }
+      { role: "user",   content: userContent  }
     ],
     temperature: 0.3,
     max_tokens: 150,
@@ -248,7 +219,6 @@ Respond ONLY with valid JSON:
   });
 
   let parsed;
-
   try {
     parsed = JSON.parse(response.choices[0].message.content);
   } catch (e) {
@@ -257,9 +227,9 @@ Respond ONLY with valid JSON:
   }
 
   return {
-    pump: Boolean(parsed.pump),
+    pump:   Boolean(parsed.pump),
     reason: parsed.reason || "No reason provided",
-    raw: parsed,
+    raw:    parsed,
   };
 }
 
@@ -268,7 +238,6 @@ Respond ONLY with valid JSON:
 // ============================================================
 app.get("/api/readings", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 24, 100);
-
   try {
     const { data, error } = await supabase
       .from("sensor_readings")
@@ -277,7 +246,6 @@ app.get("/api/readings", async (req, res) => {
       .limit(limit);
 
     if (error) throw new Error(error.message);
-
     res.json(data);
   } catch (err) {
     console.error("Readings fetch error:", err.message);
@@ -290,7 +258,6 @@ app.get("/api/readings", async (req, res) => {
 // ============================================================
 app.get("/api/pump-events", async (req, res) => {
   const limit = Math.min(parseInt(req.query.limit) || 50, 200);
-
   try {
     const { data, error } = await supabase
       .from("pump_events")
@@ -299,7 +266,6 @@ app.get("/api/pump-events", async (req, res) => {
       .limit(limit);
 
     if (error) throw new Error(error.message);
-
     res.json(data);
   } catch (err) {
     console.error("Pump events fetch error:", err.message);
@@ -322,7 +288,7 @@ app.post("/api/pump-override", async (req, res) => {
     const { error } = await supabase.from("pump_events").insert({
       pump_on,
       trigger_source: "manual",
-      duration_sec: pump_on ? null : 0,
+      duration_sec:   pump_on ? null : 0,
     });
 
     if (error) throw new Error(error.message);
@@ -338,6 +304,15 @@ app.post("/api/pump-override", async (req, res) => {
 app.get("/health", (_, res) =>
   res.json({ status: "ok", ts: new Date() })
 );
+
+// ============================================================
+// KEEP RENDER AWAKE — ping self every 10 minutes
+// ============================================================
+setInterval(() => {
+  fetch("https://pl-kp57.onrender.com/health")
+    .then(() => console.log("🏓 Keep-alive ping sent"))
+    .catch((err) => console.log("Keep-alive failed:", err.message));
+}, 10 * 60 * 1000);
 
 // ============================================================
 // START SERVER
