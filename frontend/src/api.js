@@ -1,4 +1,4 @@
-const BASE_URL = 'http://localhost:3001';
+const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.com';
 
 const apiFetch = (path, options = {}) => {
   return fetch(BASE_URL + path, {
