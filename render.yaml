@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: plantiq-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SECRET_KEY
+        generateValue: true
+      - key: FRONTEND_URL
+        value: https://frontend-iota-two-41.vercel.app
