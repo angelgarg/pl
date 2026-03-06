@@ -86,34 +86,40 @@ function parseCookies(req) {
   return list;
 }
 
-// Custom auth middleware with cookie parsing
-function requireAuth(req, res, next) {
+// Extract token from Authorization header OR cookie (supports both)
+function extractToken(req) {
+  // 1. Authorization: Bearer <token>  (used by cross-origin Vercel→Render)
+  const authHeader = req.headers['authorization'];
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    return authHeader.slice(7);
+  }
+  // 2. Cookie fallback (used by same-origin / local dev)
   const cookies = parseCookies(req);
-  const token = cookies.plantiq_token;
+  return cookies.plantiq_token || null;
+}
+
+// Auth middleware — checks Bearer header first, then cookie
+function requireAuth(req, res, next) {
+  const token = extractToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
-
   const { verifyToken } = require('./auth');
   const userId = verifyToken(token, SECRET_KEY);
   if (!userId) {
     return res.status(401).json({ error: 'Invalid token' });
   }
-
   req.user = { id: userId };
   next();
 }
 
 // Optional auth
 function optionalAuthCheck(req, res, next) {
-  const cookies = parseCookies(req);
-  const token = cookies.plantiq_token;
+  const token = extractToken(req);
   if (token) {
     const { verifyToken } = require('./auth');
     const userId = verifyToken(token, SECRET_KEY);
-    if (userId) {
-      req.user = { id: userId };
-    }
+    if (userId) req.user = { id: userId };
   }
   next();
 }
@@ -164,10 +170,12 @@ app.post('/auth/register', async (req, res) => {
     // Create token
     const token = createToken(user.id, SECRET_KEY);
 
-    // Set cookie
-    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    // Set cookie (SameSite=None; Secure needed for cross-origin Vercel→Render)
+    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
 
+    // Also return token in body so frontend can store in localStorage (cross-origin safe)
     res.json({
+      token,
       user: {
         id: user.id,
         username: user.username,
@@ -201,10 +209,12 @@ app.post('/auth/login', async (req, res) => {
     // Create token
     const token = createToken(user.id, SECRET_KEY);
 
-    // Set cookie
-    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=Lax`);
+    // Set cookie (SameSite=None; Secure for cross-origin)
+    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
 
+    // Also return token in body for localStorage storage
     res.json({
+      token,
       user: {
         id: user.id,
         username: user.username,

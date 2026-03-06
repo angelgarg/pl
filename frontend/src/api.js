@@ -1,13 +1,20 @@
 const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.com';
 
+// Token stored in localStorage (works cross-origin, no cookie issues)
+export const getToken = () => localStorage.getItem('plantiq_token');
+export const setToken = (t) => t ? localStorage.setItem('plantiq_token', t) : localStorage.removeItem('plantiq_token');
+
 const apiFetch = (path, options = {}) => {
+  const token = getToken();
+  const headers = {
+    'Content-Type': 'application/json',
+    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
+    ...options.headers
+  };
   return fetch(BASE_URL + path, {
     credentials: 'include',
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers
-    },
-    ...options
+    ...options,
+    headers
   });
 };
 
@@ -17,8 +24,10 @@ export const login = async (username, password) => {
     method: 'POST',
     body: JSON.stringify({ username, password })
   });
-  if (!res.ok) throw new Error('Login failed');
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Login failed');
+  if (data.token) setToken(data.token);
+  return data;
 };
 
 export const register = async (username, email, password, confirmPassword) => {
@@ -26,23 +35,31 @@ export const register = async (username, email, password, confirmPassword) => {
     method: 'POST',
     body: JSON.stringify({ username, email, password, confirmPassword })
   });
-  if (!res.ok) throw new Error('Registration failed');
-  return res.json();
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Registration failed');
+  if (data.token) setToken(data.token);
+  return data;
 };
 
 export const logout = async () => {
-  const res = await apiFetch('/auth/logout', {
-    method: 'POST'
-  });
-  if (!res.ok) throw new Error('Logout failed');
-  return res.json();
+  try {
+    await apiFetch('/auth/logout', { method: 'POST' });
+  } catch (e) { /* ignore */ }
+  setToken(null);
+  return { success: true };
 };
 
 export const getMe = async () => {
-  const res = await apiFetch('/api/me');
-  if (res.status === 401) return null;
-  if (!res.ok) throw new Error('Failed to get user');
-  return res.json();
+  const token = getToken();
+  if (!token) return null;
+  try {
+    const res = await apiFetch('/api/me');
+    if (res.status === 401) { setToken(null); return null; }
+    if (!res.ok) return null;
+    return res.json();
+  } catch (e) {
+    return null;
+  }
 };
 
 // Plant endpoints
@@ -63,8 +80,9 @@ export const createPlant = async (data) => {
     method: 'POST',
     body: JSON.stringify(data)
   });
-  if (!res.ok) throw new Error('Failed to create plant');
-  return res.json();
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Failed to create plant');
+  return json;
 };
 
 export const updatePlant = async (id, data) => {
@@ -77,9 +95,7 @@ export const updatePlant = async (id, data) => {
 };
 
 export const deletePlant = async (id) => {
-  const res = await apiFetch(`/api/plants/${id}`, {
-    method: 'DELETE'
-  });
+  const res = await apiFetch(`/api/plants/${id}`, { method: 'DELETE' });
   if (!res.ok) throw new Error('Failed to delete plant');
   return res.json();
 };
@@ -92,10 +108,12 @@ export const getPlantReadings = async (plantId, limit = 100) => {
 };
 
 export const addReading = async (plantId, data) => {
-  const res = await apiFetch(`/api/plants/${plantId}/readings`, {
+  const token = getToken();
+  const res = await fetch(BASE_URL + `/api/plants/${plantId}/readings`, {
     method: 'POST',
-    body: JSON.stringify(data),
-    headers: {}
+    credentials: 'include',
+    headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
+    body: data // FormData or JSON
   });
   if (!res.ok) throw new Error('Failed to add reading');
   return res.json();
@@ -138,17 +156,17 @@ export const getAlerts = async () => {
   return res.json();
 };
 
-// Image upload endpoints
+// Image upload
 export const uploadPlantImage = async (plantId, file) => {
   const formData = new FormData();
   formData.append('image', file);
-
+  const token = getToken();
   const res = await fetch(BASE_URL + `/api/plants/${plantId}/upload-image`, {
     method: 'POST',
     credentials: 'include',
+    headers: { ...(token ? { 'Authorization': `Bearer ${token}` } : {}) },
     body: formData
   });
-
   if (!res.ok) throw new Error('Failed to upload image');
   return res.json();
 };
