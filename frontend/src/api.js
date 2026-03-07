@@ -187,3 +187,33 @@ export const analyzePlant = async (plantId, imagePath) => {
   if (!res.ok) throw new Error('Failed to analyze plant');
   return res.json();
 };
+
+// ── Device / Live Monitor endpoints ─────────────────────────
+
+export const getDeviceLatest = async () => {
+  const res = await apiFetch('/api/device/latest');
+  if (!res.ok) throw new Error('Failed to get device data');
+  return res.json();
+};
+
+export const getDeviceHistory = async (limit = 100) => {
+  const res = await apiFetch(`/api/device/history?limit=${limit}`);
+  if (!res.ok) throw new Error('Failed to get history');
+  return res.json();
+};
+
+export const getDeviceStats = async () => {
+  const res = await apiFetch('/api/device/stats');
+  if (!res.ok) throw new Error('Failed to get stats');
+  return res.json();
+};
+
+export const triggerPump = async (duration_ms = 5000) => {
+  const res = await apiFetch('/api/pump/manual', {
+    method: 'POST',
+    body: JSON.stringify({ duration_ms })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Pump command failed');
+  return data;
+};

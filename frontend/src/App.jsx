@@ -9,6 +9,7 @@ import AddPlantPage from './pages/AddPlantPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import CameraPage from './pages/CameraPage';
 import SettingsPage from './pages/SettingsPage';
+import LivePage from './pages/LivePage';
 import * as api from './api';
 
 function App() {
@@ -28,7 +29,7 @@ function App() {
       const userData = await api.getMe();
       if (userData) {
         setUser(userData);
-        setCurrentPage('dashboard');
+        setCurrentPage('live');
       } else {
         setCurrentPage('login');
       }
@@ -42,13 +43,13 @@ function App() {
 
   const handleLogin = (userData) => {
     setUser(userData);
-    setCurrentPage('dashboard');
+    setCurrentPage('live');
     addToast({ type: "success", message: userData.isGuest ? "Exploring in guest mode 👀" : `Welcome back, ${userData.username}!` });
   };
 
   const handleRegister = (userData) => {
     setUser(userData);
-    setCurrentPage('dashboard');
+    setCurrentPage('live');
     addToast({ type: 'success', message: 'Account created successfully!' });
   };
 
@@ -84,7 +85,7 @@ function App() {
   };
 
   const handleAddPlantSuccess = () => {
-    setCurrentPage('dashboard');
+    setCurrentPage('live');
     addToast({ type: 'success', message: 'Plant added successfully!' });
   };
 
@@ -169,6 +170,10 @@ function App() {
 
         {currentPage === 'settings' && (
           <SettingsPage user={user} />
+        )}
+
+        {currentPage === 'live' && (
+          <LivePage isGuest={user?.isGuest} onAddToast={addToast} />
         )}
       </main>
 

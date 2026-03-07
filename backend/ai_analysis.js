@@ -1,137 +1,200 @@
+/**
+ * AI Analysis — Azure OpenAI GPT-4o Vision Agent
+ * Endpoint: https://twilio-foundry.cognitiveservices.azure.com
+ * Deployment: gpt-4o
+ * API version: 2025-01-01-preview
+ */
+
 const fs = require('fs');
 const path = require('path');
 
-let OpenAI;
-try {
-  OpenAI = require('openai').default;
-} catch (err) {
-  console.warn('OpenAI package not available');
-  OpenAI = null;
+const AZURE_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT ||
+  'https://twilio-foundry.cognitiveservices.azure.com';
+const AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2025-01-01-preview';
+const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY || '';
+
+// Full URL for chat completions
+const AZURE_CHAT_URL = `${AZURE_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_API_VERSION}`;
+
+// ─── RULE-BASED FALLBACK ─────────────────────────────────────
+
+function ruleBasedDecision(moisture_pct, temperature_c) {
+  const pump_needed = moisture_pct < 30;
+  const alert_level =
+    moisture_pct < 20 ? 'high' :
+    moisture_pct < 30 ? 'medium' :
+    temperature_c > 35 || temperature_c < 10 ? 'medium' : 'none';
+
+  const alerts = [];
+  if (moisture_pct < 20)  alerts.push('Critically dry soil — water immediately');
+  if (moisture_pct < 30)  alerts.push('Soil moisture low — watering needed');
+  if (moisture_pct > 80)  alerts.push('Soil may be overwatered');
+  if (temperature_c > 35) alerts.push('Temperature too high — move plant to cooler spot');
+  if (temperature_c < 10) alerts.push('Temperature too low — risk of cold damage');
+
+  return {
+    health_score: Math.max(10, 100 - (moisture_pct < 30 ? (30 - moisture_pct) * 2 : 0)),
+    visual_status: 'No image — rule-based assessment only',
+    pump_needed,
+    pump_reason: pump_needed
+      ? `Soil moisture at ${moisture_pct}% — below 30% threshold`
+      : `Soil moisture at ${moisture_pct}% — adequate`,
+    pump_duration_seconds: 7,
+    alert_level,
+    alerts,
+    immediate_actions: pump_needed ? ['Activate water pump'] : [],
+    recommendations: ['Install camera for AI-powered visual analysis'],
+    disease_detected: 'none',
+    growth_stage: 'vegetative'
+  };
 }
 
-// Calculate health score from sensor data
-function calculateHealthScore(sensorData, aiScore = null) {
-  let score = 100;
-  const { moisture = 50, temperature = 22, humidity = 55 } = sensorData;
+// ─── AZURE GPT-4o AGENT ANALYSIS ────────────────────────────
 
-  // Moisture: ideal 40-70%
-  if (moisture < 20) score -= 40;
-  else if (moisture < 40) score -= 20;
-  else if (moisture > 80) score -= 10;
+async function analyzeDeviceReport(imageBase64, sensorData) {
+  const { moisture_pct = 0, temperature_c = 0 } = sensorData;
 
-  // Temperature: ideal 18-28°C
-  if (temperature < 10 || temperature > 35) score -= 30;
-  else if (temperature < 15 || temperature > 30) score -= 15;
-
-  // Humidity: ideal 40-70%
-  if (humidity < 20) score -= 15;
-  else if (humidity < 30) score -= 8;
-
-  // Combine with AI score if available
-  if (aiScore !== null && aiScore !== undefined) {
-    score = Math.round(score * 0.4 + aiScore * 0.6);
+  if (!AZURE_API_KEY) {
+    console.warn('[AI] AZURE_OPENAI_API_KEY not set — using rule-based fallback');
+    return ruleBasedDecision(moisture_pct, temperature_c);
   }
 
-  return Math.max(0, Math.min(100, score));
-}
+  const now = new Date().toISOString();
+  const moistureStatus =
+    moisture_pct < 20 ? 'CRITICALLY DRY' :
+    moisture_pct < 30 ? 'DRY' :
+    moisture_pct < 50 ? 'ADEQUATE' :
+    moisture_pct < 70 ? 'MOIST' : 'WET / POSSIBLY OVERWATERED';
 
-// Analyze image with OpenAI vision
-async function analyzeImage(imagePath, plantName = '', sensorData = {}) {
-  try {
-    if (!process.env.OPENAI_API_KEY) {
-      console.log('OPENAI_API_KEY not set, skipping AI analysis');
-      return null;
-    }
+  const prompt = `You are PlantIQ, an expert AI plant health agent. Analyze the plant image together with the sensor data below and return a complete health report and action plan.
 
-    if (!OpenAI) {
-      console.log('OpenAI package not available');
-      return null;
-    }
+SENSOR DATA (recorded ${now}):
+- Soil Moisture: ${moisture_pct}% → Status: ${moistureStatus}
+- Ambient Temperature: ${temperature_c}°C
 
-    if (!fs.existsSync(imagePath)) {
-      console.error(`Image file not found: ${imagePath}`);
-      return null;
-    }
+WATERING THRESHOLDS:
+- < 20%: critically dry — water immediately, pump 10–15 s
+- 20–30%: dry — water now, pump 7–10 s
+- 30–50%: acceptable — water soon if trending down
+- 50–70%: ideal moisture
+- > 70%: wet — do NOT water (risk of root rot)
 
-    const client = new OpenAI({
-      apiKey: process.env.OPENAI_API_KEY
-    });
+TASK: Combine visual inspection of the image with the sensor readings to produce a holistic assessment.
 
-    // Read image and convert to base64
-    const imageBuffer = fs.readFileSync(imagePath);
-    const base64Image = imageBuffer.toString('base64');
-    const ext = path.extname(imagePath).toLowerCase();
-    let mediaType = 'image/jpeg';
-    if (ext === '.png') mediaType = 'image/png';
-    else if (ext === '.gif') mediaType = 'image/gif';
-    else if (ext === '.webp') mediaType = 'image/webp';
-
-    const prompt = `You are an expert botanist and plant health specialist. Analyze this plant image for:
-1. Visual health assessment (healthy/needs attention/critical)
-2. Any visible diseases or pest damage
-3. Growth stage (seedling/young/mature/flowering)
-4. Immediate concerns
-5. Care recommendations
-
-Also consider these sensor readings: moisture=${sensorData.moisture}%, temp=${sensorData.temperature}°C, humidity=${sensorData.humidity}%
-
-Respond in valid JSON format with these exact keys:
+Respond ONLY with a valid JSON object (no markdown, no extra text):
 {
-  "visual_health": "string (healthy/needs_attention/critical)",
-  "diseases_detected": ["string array of diseases if any"],
-  "growth_stage": "string",
-  "immediate_concerns": ["string array of concerns"],
-  "recommendations": ["string array of actionable recommendations"],
-  "health_score": number (0-100),
-  "summary": "string (1-2 sentences overview)"
+  "health_score": <integer 0-100>,
+  "visual_status": "<one paragraph describing what you see in the image>",
+  "pump_needed": <true|false>,
+  "pump_reason": "<clear reasoning combining sensor + visual evidence>",
+  "pump_duration_seconds": <integer 5-30>,
+  "alert_level": "<none|low|medium|high|critical>",
+  "alerts": ["<specific issue 1>", "<specific issue 2>"],
+  "immediate_actions": ["<urgent action 1>"],
+  "recommendations": ["<care tip 1>", "<care tip 2>", "<care tip 3>"],
+  "disease_detected": "<none | name of disease or pest>",
+  "disease_confidence": "<low|medium|high> (only if disease detected)",
+  "growth_stage": "<seedling|young|vegetative|flowering|fruiting|dormant>",
+  "leaf_color": "<description>",
+  "leaf_condition": "<healthy|wilting|yellowing|browning|spotted|curling>",
+  "soil_surface_observation": "<what you can see of the soil surface>"
 }`;
 
-    const response = await client.messages.create({
-      model: 'gpt-4o',
-      max_tokens: 1024,
+  try {
+    const body = {
       messages: [
+        {
+          role: 'system',
+          content: 'You are PlantIQ, an expert AI plant health monitoring agent. You analyze plant images combined with sensor data to make precise, actionable recommendations. Always respond with valid JSON only.'
+        },
         {
           role: 'user',
           content: [
             {
-              type: 'image',
-              source: {
-                type: 'base64',
-                media_type: mediaType,
-                data: base64Image
+              type: 'image_url',
+              image_url: {
+                url: `data:image/jpeg;base64,${imageBase64}`,
+                detail: 'high'
               }
             },
-            {
-              type: 'text',
-              text: prompt
-            }
+            { type: 'text', text: prompt }
           ]
         }
-      ]
+      ],
+      temperature: 0.15,
+      max_tokens: 700,
+      response_format: { type: 'json_object' }
+    };
+
+    const res = await fetch(AZURE_CHAT_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': AZURE_API_KEY
+      },
+      body: JSON.stringify(body)
     });
 
-    const content = response.content[0];
-    if (content.type !== 'text') {
-      console.error('Unexpected response type from OpenAI');
-      return null;
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Azure API ${res.status}: ${errText}`);
     }
 
-    // Parse JSON response
-    const jsonMatch = content.text.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) {
-      console.error('No JSON found in OpenAI response');
-      return null;
-    }
+    const data = await res.json();
+    const content = data.choices?.[0]?.message?.content;
+    if (!content) throw new Error('Empty response from Azure');
 
-    const analysis = JSON.parse(jsonMatch[0]);
-    return analysis;
+    const parsed = JSON.parse(content);
+    console.log(`[AI] Analysis complete — health: ${parsed.health_score}, pump: ${parsed.pump_needed}, alert: ${parsed.alert_level}`);
+    return parsed;
+
   } catch (err) {
-    console.error('Error analyzing image with OpenAI:', err.message);
+    console.error('[AI] Azure GPT-4o failed:', err.message, '— using rule-based fallback');
+    return ruleBasedDecision(moisture_pct, temperature_c);
+  }
+}
+
+// ─── LEGACY: analyzeImage (used by multi-plant pages) ────────
+
+async function analyzeImage(imagePath, plantName = '', sensorData = {}) {
+  try {
+    if (!fs.existsSync(imagePath)) return null;
+    const imageBuffer = fs.readFileSync(imagePath);
+    const base64Image = imageBuffer.toString('base64');
+    const result = await analyzeDeviceReport(base64Image, {
+      moisture_pct: sensorData.moisture || 50,
+      temperature_c: sensorData.temperature || 22
+    });
+    return {
+      visual_health: result.alert_level === 'none' ? 'healthy' : 'needs_attention',
+      diseases_detected: result.disease_detected !== 'none' ? [result.disease_detected] : [],
+      growth_stage: result.growth_stage,
+      immediate_concerns: result.immediate_actions,
+      recommendations: result.recommendations,
+      health_score: result.health_score,
+      summary: result.visual_status
+    };
+  } catch (err) {
+    console.error('[AI] analyzeImage error:', err.message);
     return null;
   }
 }
 
-module.exports = {
-  calculateHealthScore,
-  analyzeImage
-};
+// ─── HEALTH SCORE (sensor-only, no vision) ───────────────────
+
+function calculateHealthScore(sensorData, aiScore = null) {
+  let score = 100;
+  const { moisture = 50, temperature = 22, humidity = 55 } = sensorData;
+  if (moisture < 20) score -= 40;
+  else if (moisture < 40) score -= 20;
+  else if (moisture > 80) score -= 10;
+  if (temperature < 10 || temperature > 35) score -= 30;
+  else if (temperature < 15 || temperature > 30) score -= 15;
+  if (humidity < 20) score -= 15;
+  else if (humidity < 30) score -= 8;
+  if (aiScore !== null) score = Math.round(score * 0.4 + aiScore * 0.6);
+  return Math.max(0, Math.min(100, score));
+}
+
+module.exports = { analyzeDeviceReport, analyzeImage, calculateHealthScore };

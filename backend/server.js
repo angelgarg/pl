@@ -8,7 +8,7 @@ require('dotenv').config();
 
 const db = require('./db');
 const { hashPassword, verifyPassword, createToken } = require('./auth');
-const { calculateHealthScore, analyzeImage } = require('./ai_analysis');
+const { calculateHealthScore, analyzeImage, analyzeDeviceReport } = require('./ai_analysis');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -790,6 +790,178 @@ app.get('/api/alerts', requireAuth, (req, res) => {
     console.error('Alerts error:', err);
     res.status(500).json({ error: 'Failed to get alerts' });
   }
+});
+
+// ============================================================
+// ESP32-S3 DEVICE API  (no user auth — uses device key)
+// ============================================================
+
+const DEVICE_KEY = process.env.DEVICE_API_KEY || 'plantiq-device-key-change-me';
+
+function requireDevice(req, res, next) {
+  const key = req.headers['x-device-key'] || req.query.device_key;
+  if (key !== DEVICE_KEY) return res.status(401).json({ error: 'Invalid device key' });
+  next();
+}
+
+// Pending manual pump command (set by dashboard, consumed by ESP32)
+let pendingPumpCmd = null;
+
+// SSE clients
+const sseClients = new Set();
+
+function broadcastSSE(data) {
+  sseClients.forEach(client => {
+    try { client.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
+  });
+}
+
+// ── Main device report: ESP32 POSTs sensor data + raw JPEG ──
+// POST /api/device-report?moisture=45&temperature=24.1
+// Headers: Content-Type: image/jpeg  x-device-key: <key>
+// Body: raw JPEG bytes (may be empty if no camera)
+app.post('/api/device-report', requireDevice, async (req, res) => {
+  const moisture_pct  = parseFloat(req.query.moisture    || req.query.moisture_pct || 0);
+  const temperature_c = parseFloat(req.query.temperature || req.query.temperature_c || 0);
+
+  // Collect raw JPEG body
+  const chunks = [];
+  req.on('data', c => chunks.push(c));
+  await new Promise(resolve => req.on('end', resolve));
+  const imgBuffer = Buffer.concat(chunks);
+
+  let image_path = null;
+  let imageBase64 = null;
+  if (imgBuffer.length > 1000) {   // >1KB means we got a real image
+    const filename = `device_${Date.now()}.jpg`;
+    const fullPath = path.join(uploadsDir, filename);
+    fs.writeFileSync(fullPath, imgBuffer);
+    image_path = `/uploads/${filename}`;
+    imageBase64 = imgBuffer.toString('base64');
+
+    // Prune old device images (keep newest 200)
+    try {
+      const files = fs.readdirSync(uploadsDir)
+        .filter(f => f.startsWith('device_'))
+        .map(f => ({ name: f, mtime: fs.statSync(path.join(uploadsDir, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+      files.slice(200).forEach(f => fs.unlinkSync(path.join(uploadsDir, f.name)));
+    } catch (_) {}
+  }
+
+  // AI analysis (with image if available, else sensor-only fallback)
+  let aiResult;
+  try {
+    aiResult = await analyzeDeviceReport(imageBase64 || '', { moisture_pct, temperature_c });
+  } catch (err) {
+    console.error('[device-report] AI error:', err.message);
+    aiResult = {
+      health_score: 50, visual_status: 'AI unavailable', pump_needed: moisture_pct < 30,
+      pump_reason: 'Rule-based fallback', pump_duration_seconds: 7,
+      alert_level: moisture_pct < 30 ? 'medium' : 'none', alerts: [], recommendations: [],
+      disease_detected: 'none', growth_stage: 'vegetative', immediate_actions: []
+    };
+  }
+
+  // Merge manual pump command if queued
+  const manualCmd = pendingPumpCmd;
+  pendingPumpCmd = null;
+  const pump_activated = aiResult.pump_needed || !!manualCmd;
+  const pump_duration_ms = manualCmd
+    ? manualCmd.duration
+    : (aiResult.pump_duration_seconds || 7) * 1000;
+
+  // Save to DB
+  const reading = db.createDeviceReading({
+    moisture_pct, temperature_c, image_path,
+    ai_health_score:    aiResult.health_score,
+    ai_pump:            pump_activated,
+    ai_pump_reason:     aiResult.pump_reason,
+    ai_alert_level:     aiResult.alert_level,
+    ai_alerts:          aiResult.alerts          || [],
+    ai_visual_status:   aiResult.visual_status,
+    ai_recommendations: aiResult.recommendations || [],
+    ai_disease:         aiResult.disease_detected,
+    ai_growth_stage:    aiResult.growth_stage,
+    ai_immediate_actions: aiResult.immediate_actions || [],
+    pump_activated,
+    pump_duration_ms: pump_activated ? pump_duration_ms : 0
+  });
+
+  // Push to all live-stream clients
+  broadcastSSE(reading);
+
+  res.json({
+    pump:        pump_activated,
+    duration_ms: pump_activated ? pump_duration_ms : 0,
+    reason:      aiResult.pump_reason,
+    health_score: aiResult.health_score,
+    alert_level: aiResult.alert_level,
+    buzzer:      aiResult.alert_level === 'high' || aiResult.alert_level === 'critical'
+  });
+});
+
+// ── Live SSE stream ──────────────────────────────────────────
+app.get('/api/live-stream', (req, res) => {
+  // CORS for SSE (must allow cross-origin from Vercel)
+  const origin = req.headers.origin || '';
+  if (!origin || allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin || '*');
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+  }
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Send latest data immediately
+  const latest = db.getLatestDeviceReading();
+  if (latest) res.write(`data: ${JSON.stringify(latest)}\n\n`);
+
+  sseClients.add(res);
+  const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 25000);
+  req.on('close', () => { sseClients.delete(res); clearInterval(heartbeat); });
+});
+
+// ── Latest reading ───────────────────────────────────────────
+app.get('/api/device/latest', requireAuth, (req, res) => {
+  res.json(db.getLatestDeviceReading() || {});
+});
+
+// ── History ──────────────────────────────────────────────────
+app.get('/api/device/history', requireAuth, (req, res) => {
+  const limit = Math.min(parseInt(req.query.limit || 100), 500);
+  res.json(db.getDeviceReadingHistory(limit));
+});
+
+// ── Manual pump trigger from dashboard ───────────────────────
+app.post('/api/pump/manual', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot control the pump' });
+  const duration_ms = Math.min(parseInt(req.body.duration_ms || 5000), 30000);
+  pendingPumpCmd = { duration: duration_ms, triggeredBy: req.user.id, at: Date.now() };
+  console.log(`[PUMP] Manual command queued — ${duration_ms}ms`);
+  res.json({ success: true, message: `Pump will activate for ${duration_ms / 1000}s on next device report` });
+});
+
+// ── Device stats summary ─────────────────────────────────────
+app.get('/api/device/stats', requireAuth, (req, res) => {
+  const history = db.getDeviceReadingHistory(100);
+  if (!history.length) return res.json({ count: 0 });
+
+  const moistures = history.map(r => r.moisture_pct).filter(v => v > 0);
+  const temps     = history.map(r => r.temperature_c).filter(v => v !== 0);
+  const pumpCount = history.filter(r => r.pump_activated).length;
+  const latest    = history[0];
+
+  res.json({
+    count: history.length,
+    latest_health_score: latest.ai_health_score,
+    latest_alert_level:  latest.ai_alert_level,
+    avg_moisture: moistures.length ? Math.round(moistures.reduce((a,b)=>a+b,0)/moistures.length) : null,
+    avg_temp:     temps.length     ? parseFloat((temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1)) : null,
+    pump_activations_last_100: pumpCount,
+    last_updated: latest.created_at
+  });
 });
 
 // ============================================================

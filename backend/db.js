@@ -233,6 +233,53 @@ function createNote(noteData) {
   return note;
 }
 
+// ─── DEVICE READINGS (ESP32 live sensor + AI reports) ───────
+
+function getDeviceReadings() {
+  return readFile('device_readings.json');
+}
+
+function saveDeviceReadings(readings) {
+  writeFile('device_readings.json', readings);
+}
+
+function createDeviceReading(data) {
+  const readings = getDeviceReadings();
+  const reading = {
+    id: generateId(),
+    moisture_pct:      data.moisture_pct      ?? 0,
+    temperature_c:     data.temperature_c     ?? 0,
+    image_path:        data.image_path        ?? null,
+    ai_health_score:   data.ai_health_score   ?? null,
+    ai_pump:           data.ai_pump           ?? false,
+    ai_pump_reason:    data.ai_pump_reason    ?? '',
+    ai_alert_level:    data.ai_alert_level    ?? 'none',
+    ai_alerts:         data.ai_alerts         ?? [],
+    ai_visual_status:  data.ai_visual_status  ?? '',
+    ai_recommendations:data.ai_recommendations ?? [],
+    ai_disease:        data.ai_disease        ?? 'none',
+    ai_growth_stage:   data.ai_growth_stage   ?? 'vegetative',
+    ai_immediate_actions: data.ai_immediate_actions ?? [],
+    pump_activated:    data.pump_activated    ?? false,
+    pump_duration_ms:  data.pump_duration_ms  ?? 0,
+    created_at:        new Date().toISOString()
+  };
+  readings.unshift(reading);              // newest first
+  if (readings.length > 1000) readings.splice(1000); // cap at 1000
+  saveDeviceReadings(readings);
+  return reading;
+}
+
+function getLatestDeviceReading() {
+  const readings = getDeviceReadings();
+  return readings[0] || null;
+}
+
+function getDeviceReadingHistory(limit = 100) {
+  const readings = getDeviceReadings();
+  return readings.slice(0, Math.min(limit, readings.length));
+}
+
 module.exports = {
   getUsers,
   saveUsers,
@@ -254,5 +301,9 @@ module.exports = {
   getNotes,
   saveNotes,
   getNotesByPlantId,
-  createNote
+  createNote,
+  // Device readings
+  createDeviceReading,
+  getLatestDeviceReading,
+  getDeviceReadingHistory
 };
