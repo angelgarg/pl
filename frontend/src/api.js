@@ -49,6 +49,14 @@ export const logout = async () => {
   return { success: true };
 };
 
+export const guestLogin = async () => {
+  const res = await apiFetch('/auth/guest', { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Guest login failed');
+  if (data.token) setToken(data.token);
+  return data;
+};
+
 export const getMe = async () => {
   const token = getToken();
   if (!token) return null;

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 
 export default function Sidebar({ currentPage, setCurrentPage, user, onLogout }) {
   const [isOpen, setIsOpen] = useState(false);
+  const isGuest = user?.isGuest;
 
   const navItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
@@ -42,6 +43,13 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
           </div>
         </div>
 
+        {isGuest && (
+          <div className="guest-banner">
+            <span className="guest-badge">👀 Guest Mode</span>
+            <p className="guest-banner-text">Viewing demo data — read only</p>
+          </div>
+        )}
+
         <ul className="sidebar-nav">
           {navItems.map(item => (
             <li key={item.id}>
@@ -59,17 +67,20 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
         {user && (
           <div className="sidebar-footer">
             <div className="sidebar-user">
-              <div className="sidebar-user-avatar">👤</div>
+              <div className="sidebar-user-avatar">{isGuest ? '👀' : '👤'}</div>
               <div className="sidebar-user-info">
-                <div className="sidebar-user-name">{user.username}</div>
-                <div className="sidebar-user-email">{user.email}</div>
+                <div className="sidebar-user-name">
+                  {isGuest ? 'Guest' : user.username}
+                  {isGuest && <span className="guest-tag"> (demo)</span>}
+                </div>
+                <div className="sidebar-user-email">{isGuest ? 'No account' : user.email}</div>
               </div>
             </div>
             <button
               className="sidebar-logout-btn"
               onClick={handleLogout}
             >
-              Logout
+              {isGuest ? 'Sign Up' : 'Logout'}
             </button>
           </div>
         )}

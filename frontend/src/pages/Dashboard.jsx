@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import PlantCard from '../components/PlantCard';
 import * as api from '../api';
 
-export default function Dashboard({ onNavigateToPlant, onAddNote }) {
+export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
   const [plants, setPlants] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -44,6 +44,11 @@ export default function Dashboard({ onNavigateToPlant, onAddNote }) {
 
   return (
     <div className="page">
+      {isGuest && (
+        <div className="guest-readonly-notice">
+          👀 You're in guest mode — browsing demo data. <strong style={{marginLeft:4}}>Create an account</strong> to add your own plants.
+        </div>
+      )}
       <div className="page-header">
         <h1 className="page-title">Dashboard</h1>
         <p className="page-subtitle">Monitor your plant collection</p>
@@ -77,12 +82,14 @@ export default function Dashboard({ onNavigateToPlant, onAddNote }) {
           <div className="empty-state-emoji">🌱</div>
           <h2 className="empty-state-title">No plants yet</h2>
           <p className="empty-state-subtitle">Add your first plant to get started with PlantIQ</p>
-          <button
-            className="empty-state-btn"
-            onClick={() => {}}
-          >
-            Add Plant
-          </button>
+          {!isGuest && (
+            <button
+              className="empty-state-btn"
+              onClick={() => {}}
+            >
+              Add Plant
+            </button>
+          )}
         </div>
       ) : (
         <div className="plant-grid">

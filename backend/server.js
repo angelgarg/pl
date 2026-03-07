@@ -117,17 +117,24 @@ function extractToken(req) {
 }
 
 // Auth middleware — checks Bearer header first, then cookie
+// Also accepts guest tokens (signed with SECRET_KEY + ':guest')
 function requireAuth(req, res, next) {
   const token = extractToken(req);
   if (!token) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   const { verifyToken } = require('./auth');
-  const userId = verifyToken(token, SECRET_KEY);
+  // Try normal token first, then guest token
+  let userId = verifyToken(token, SECRET_KEY);
+  let isGuest = false;
+  if (!userId) {
+    userId = verifyToken(token, SECRET_KEY + ':guest');
+    if (userId) isGuest = true;
+  }
   if (!userId) {
     return res.status(401).json({ error: 'Invalid token' });
   }
-  req.user = { id: userId };
+  req.user = { id: userId, isGuest };
   next();
 }
 
@@ -136,8 +143,13 @@ function optionalAuthCheck(req, res, next) {
   const token = extractToken(req);
   if (token) {
     const { verifyToken } = require('./auth');
-    const userId = verifyToken(token, SECRET_KEY);
-    if (userId) req.user = { id: userId };
+    let userId = verifyToken(token, SECRET_KEY);
+    let isGuest = false;
+    if (!userId) {
+      userId = verifyToken(token, SECRET_KEY + ':guest');
+      if (userId) isGuest = true;
+    }
+    if (userId) req.user = { id: userId, isGuest };
   }
   next();
 }
@@ -250,6 +262,73 @@ app.post('/auth/logout', (req, res) => {
   res.json({ success: true });
 });
 
+// Guest login — creates/reuses a shared guest account with sample data
+app.post('/auth/guest', async (req, res) => {
+  try {
+    const GUEST_USERNAME = '__guest__';
+    let guest = db.findUserByUsername(GUEST_USERNAME);
+
+    if (!guest) {
+      // Create the permanent guest user (password not usable for normal login)
+      const fakeHash = await hashPassword(crypto.randomBytes(32).toString('hex'));
+      guest = db.createUser({
+        username: GUEST_USERNAME,
+        email: 'guest@plantiq.demo',
+        password_hash: fakeHash
+      });
+
+      // Seed sample plants for the guest
+      const now = new Date();
+      const samplePlants = [
+        { name: 'Monstera Deliciosa', species: 'Monstera deliciosa', location: 'Living Room', moisture_min: 40, moisture_max: 70, temp_min: 18, temp_max: 30, humidity_min: 50, humidity_max: 80 },
+        { name: 'Peace Lily', species: 'Spathiphyllum wallisii', location: 'Bedroom', moisture_min: 50, moisture_max: 75, temp_min: 16, temp_max: 28, humidity_min: 40, humidity_max: 70 },
+        { name: 'Snake Plant', species: 'Sansevieria trifasciata', location: 'Office', moisture_min: 20, moisture_max: 50, temp_min: 15, temp_max: 30, humidity_min: 30, humidity_max: 60 },
+      ];
+
+      for (const p of samplePlants) {
+        const plant = db.createPlant({ ...p, user_id: guest.id });
+
+        // Seed 7 days of readings (every 3 hours)
+        for (let dayOffset = 6; dayOffset >= 0; dayOffset--) {
+          for (let hour = 0; hour < 24; hour += 3) {
+            const ts = new Date(now);
+            ts.setDate(ts.getDate() - dayOffset);
+            ts.setHours(hour, 0, 0, 0);
+            db.createReading({
+              plant_id: plant.id,
+              moisture: Math.round(45 + Math.random() * 20),
+              temperature: parseFloat((22 + Math.random() * 5).toFixed(1)),
+              humidity: Math.round(55 + Math.random() * 15),
+              light_level: Math.round(300 + Math.random() * 400),
+              health_score: Math.round(75 + Math.random() * 20),
+              recorded_at: ts.toISOString()
+            });
+          }
+        }
+
+        // Seed a sample journal note
+        db.createNote({
+          plant_id: plant.id,
+          user_id: guest.id,
+          content: `${p.name} is looking healthy! Leaves are vibrant and soil moisture is good.`
+        });
+      }
+    }
+
+    // Issue short-lived guest token (1 hour), signed with a guest-specific secret
+    const token = createToken(guest.id, SECRET_KEY + ':guest');
+
+    res.json({
+      token,
+      guest: true,
+      user: { id: guest.id, username: 'Guest', email: guest.email }
+    });
+  } catch (err) {
+    console.error('Guest login error:', err);
+    res.status(500).json({ error: 'Guest login failed' });
+  }
+});
+
 // ============================================================
 // USER ROUTES
 // ============================================================
@@ -261,8 +340,9 @@ app.get('/api/me', requireAuth, (req, res) => {
   }
   res.json({
     id: user.id,
-    username: user.username,
-    email: user.email
+    username: req.user.isGuest ? 'Guest' : user.username,
+    email: user.email,
+    isGuest: req.user.isGuest || false
   });
 });
 

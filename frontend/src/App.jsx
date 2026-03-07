@@ -43,7 +43,7 @@ function App() {
   const handleLogin = (userData) => {
     setUser(userData);
     setCurrentPage('dashboard');
-    addToast({ type: 'success', message: `Welcome back, ${userData.username}!` });
+    addToast({ type: "success", message: userData.isGuest ? "Exploring in guest mode 👀" : `Welcome back, ${userData.username}!` });
   };
 
   const handleRegister = (userData) => {
@@ -137,17 +137,11 @@ function App() {
       />
 
       <main className="main-content">
-        {currentPage === 'dashboard' && (
+        {(currentPage === 'dashboard' || currentPage === 'my-plants') && (
           <Dashboard
             onNavigateToPlant={handleNavigateToPlant}
             onAddNote={handleAddNote}
-          />
-        )}
-
-        {currentPage === 'my-plants' && (
-          <Dashboard
-            onNavigateToPlant={handleNavigateToPlant}
-            onAddNote={handleAddNote}
+            isGuest={user?.isGuest}
           />
         )}
 
