@@ -8,30 +8,47 @@ export default function LoginPage({ onLogin, onSwitchToRegister }) {
   const [guestLoading, setGuestLoading] = useState(false);
   const [error, setError] = useState('');
 
+  const [statusMsg, setStatusMsg] = useState('');
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    setStatusMsg('Connecting to server...');
     try {
+      // Wake the Render backend first (it sleeps on free tier)
+      const wakeTimer = setTimeout(() => setStatusMsg('Server is waking up, please wait (up to 30s)...'), 3000);
+      await api.wakeBackend();
+      clearTimeout(wakeTimer);
+      setStatusMsg('Signing in...');
       const result = await api.login(username, password);
       onLogin(result.user);
     } catch (err) {
-      setError(err.message || 'Login failed');
+      setError(err.message === 'signal timed out'
+        ? 'Server took too long to respond. Please try again.'
+        : err.message || 'Login failed. Please try again.');
     } finally {
       setLoading(false);
+      setStatusMsg('');
     }
   };
 
   const handleGuestLogin = async () => {
     setError('');
     setGuestLoading(true);
+    setStatusMsg('Connecting...');
     try {
+      const wakeTimer = setTimeout(() => setStatusMsg('Server is waking up, please wait...'), 3000);
+      await api.wakeBackend();
+      clearTimeout(wakeTimer);
+      setStatusMsg('Loading guest session...');
       const result = await api.guestLogin();
       onLogin({ ...result.user, isGuest: true });
     } catch (err) {
       setError(err.message || 'Guest login failed');
     } finally {
       setGuestLoading(false);
+      setStatusMsg('');
     }
   };
 
@@ -50,6 +67,7 @@ export default function LoginPage({ onLogin, onSwitchToRegister }) {
         <p className="login-subtitle">Sign in to your account</p>
 
         {error && <div className="login-error">{error}</div>}
+        {statusMsg && <div className="login-status">{statusMsg}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group">

@@ -2,7 +2,10 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 
-const DATA_DIR = path.join(__dirname, 'data');
+// Use /tmp on Render (survives sleep/wake cycles), fallback to local data/ for dev
+const DATA_DIR = process.env.RENDER
+  ? '/tmp/plantiq-data'
+  : path.join(__dirname, 'data');
 
 // Ensure data directory exists
 function ensureDataDir() {

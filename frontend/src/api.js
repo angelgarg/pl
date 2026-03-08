@@ -4,18 +4,35 @@ const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.c
 export const getToken = () => localStorage.getItem('plantiq_token');
 export const setToken = (t) => t ? localStorage.setItem('plantiq_token', t) : localStorage.removeItem('plantiq_token');
 
-const apiFetch = (path, options = {}) => {
+// Wake up the Render backend (it sleeps after 15 min on free tier).
+// Call this before auth so the user gets a friendly message instead of an error.
+export const wakeBackend = async () => {
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60000); // 60s max wait
+    await fetch(BASE_URL + '/health', { signal: controller.signal });
+    clearTimeout(timeout);
+    return true;
+  } catch (_) {
+    return false;
+  }
+};
+
+const apiFetch = (path, options = {}, timeoutMs = 60000) => {
   const token = getToken();
   const headers = {
     'Content-Type': 'application/json',
     ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
     ...options.headers
   };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   return fetch(BASE_URL + path, {
     credentials: 'include',
+    signal: controller.signal,
     ...options,
     headers
-  });
+  }).finally(() => clearTimeout(timeout));
 };
 
 // Auth endpoints

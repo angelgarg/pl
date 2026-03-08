@@ -8,19 +8,28 @@ export default function RegisterPage({ onLogin, onSwitchToLogin }) {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [statusMsg, setStatusMsg] = useState('');
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
     setLoading(true);
+    setStatusMsg('Connecting to server...');
 
     try {
+      const wakeTimer = setTimeout(() => setStatusMsg('Server is waking up, please wait (up to 30s)...'), 3000);
+      await api.wakeBackend();
+      clearTimeout(wakeTimer);
+      setStatusMsg('Creating your account...');
       const result = await api.register(username, email, password, confirmPassword);
       onLogin(result.user);
     } catch (err) {
-      setError(err.message || 'Registration failed');
+      setError(err.message === 'signal timed out'
+        ? 'Server took too long to respond. Please try again.'
+        : err.message || 'Registration failed. Please try again.');
     } finally {
       setLoading(false);
+      setStatusMsg('');
     }
   };
 
@@ -39,6 +48,7 @@ export default function RegisterPage({ onLogin, onSwitchToLogin }) {
         <p className="login-subtitle">Join PlantIQ today</p>
 
         {error && <div className="login-error">{error}</div>}
+        {statusMsg && <div className="login-status">{statusMsg}</div>}
 
         <form onSubmit={handleSubmit} className="login-form">
           <div className="form-group">

@@ -1125,10 +1125,15 @@ app.post('/api/pump-override', async (req, res) => {
   }
 });
 
-// Keep-alive ping for Render hosting
+// Keep-alive ping for Render hosting (uses http module — works on all Node versions)
+const http = require('http');
 setInterval(() => {
-  fetch('http://localhost:' + PORT + '/health').catch(() => {});
-}, 10 * 60 * 1000);
+  try {
+    http.get('http://localhost:' + PORT + '/health', (res) => {
+      res.resume(); // drain response
+    }).on('error', () => {}); // silently ignore errors
+  } catch (_) {}
+}, 9 * 60 * 1000); // every 9 minutes (Render sleeps after 15 min)
 
 // ============================================================
 // ERROR HANDLING
