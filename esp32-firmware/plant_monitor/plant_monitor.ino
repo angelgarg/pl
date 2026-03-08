@@ -1,6 +1,6 @@
 /*
  * ╔══════════════════════════════════════════════════════════╗
- * ║       PlantIQ — ESP32-S3 AI Plant Monitor v2.2          ║
+ * ║       PlantIQ — ESP32-S3 AI Plant Monitor v3.0          ║
  * ║                                                          ║
  * ║  Hardware:                                               ║
  * ║    • OV2640 camera module (built-in on board)           ║
@@ -8,21 +8,31 @@
  * ║    • DS18B20 waterproof temp sensor   → GPIO 14         ║
  * ║    • Relay module (controls pump)     → GPIO 21         ║
  * ║    • Active buzzer                    → GPIO 47         ║
+ * ║    • BOOT button (reset WiFi)         → GPIO 0          ║
  * ║                                                          ║
  * ║  Libraries (Arduino Library Manager):                   ║
  * ║    • DallasTemperature  by Miles Burton                 ║
  * ║    • OneWire            by Jim Studt                    ║
+ * ║    • WiFiManager        by tzapu ← NEW v3.0            ║
  * ║    • Board: "ESP32S3 Dev Module" (Espressif >= 2.0.11)  ║
  * ╚══════════════════════════════════════════════════════════╝
  *
+ * NEW v3.0 — WiFiManager (no more hard-coded WiFi password!)
+ *   • On first boot: creates hotspot "PlantIQ-Setup" (pw: plantiq123)
+ *   • Connect phone to that hotspot → captive portal opens
+ *   • Enter your local farm WiFi credentials → saved to flash
+ *   • Device restarts and connects automatically, forever
+ *   • To reconfigure WiFi (new location): hold BOOT button 3 seconds
+ *   • Device key is shown on the portal page for easy copy
+ *
+ * FIXES v2.3:
+ *   • sensorsValid flag: sends report even when DS18B20 missing,
+ *     but blocks pump — camera + moisture data still goes to dashboard
+ *
  * FIXES v2.2:
- *   • REMOVED light sleep — OV2640 DVP interface freezes on
- *     light sleep wake; replaced with plain delay()
+ *   • REMOVED light sleep — OV2640 DVP interface freezes on wake
  *   • HTTP timeout raised to 45s (handles Render cold starts)
- *   • Watchdog raised to 120s to cover full HTTP wait
- *   • Sensor validity guard — skips report & pump if DS18B20
- *     reads -999 (wiring fault), preventing false pump triggers
- *   • USE_LIGHT_SLEEP define removed (was misleading)
+ *   • Watchdog raised to 120s
  *
  * FIXES v2.1:
  *   • struct ReportResult declared BEFORE any function
@@ -36,8 +46,10 @@
 //  STEP 1 — INCLUDES  (must be first)
 // ════════════════════════════════════════════════════════════
 #include <WiFi.h>
+#include <WiFiManager.h>           // ← NEW: install via Library Manager
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include <Preferences.h>           // built-in — save device key to flash
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include "esp_camera.h"
@@ -62,17 +74,28 @@ struct OfflineReading {
 };
 
 // ════════════════════════════════════════════════════════════
-//  ① USER CONFIG — edit before flashing
+//  ① USER CONFIG — only DEVICE_KEY needs editing before flash
+//
+//  WiFi credentials are set via the captive portal on first
+//  boot — you no longer need to hard-code them here.
 // ════════════════════════════════════════════════════════════
 
-#define WIFI_SSID          "Ventur-Labs"
-#define WIFI_PASSWORD      "vl@tiet1"
+// Paste the key from your PlantIQ dashboard here:
+//   Dashboard → Fields & Devices → Add Device → copy key shown once
+#define DEVICE_KEY         "piq-XXXXXX-XXXXXX"    // ← CHANGE THIS
+
 #define BACKEND_URL        "https://pl-kp57.onrender.com"
-#define DEVICE_KEY         "plantiq-device-key-change-me"
+
+// WiFi portal AP name & password (shown when no WiFi is configured)
+#define PORTAL_AP_NAME     "PlantIQ-Setup"
+#define PORTAL_AP_PASS     "plantiq123"
+
+// Hold BOOT button this many seconds to wipe WiFi creds & re-open portal
+#define RESET_BTN_PIN       0       // BOOT button on ESP32-S3
+#define RESET_HOLD_MS    3000       // hold 3s to reset
 
 // ── Timing ──────────────────────────────────────────────────
 #define REPORT_INTERVAL_S   30      // send to server every N seconds
-                                    // (light sleep removed — uses delay)
 
 // ── Moisture thresholds ─────────────────────────────────────
 #define MOISTURE_CRITICAL   20      // < 20% → emergency local pump
@@ -113,10 +136,10 @@ struct OfflineReading {
 //  HOW TO CALIBRATE:
 //    1. Open Serial Monitor at 115200 baud
 //    2. Hold sensor in dry air — note the raw= value → SOIL_DRY_RAW
-//    3. Submerge sensor tip in water — note the raw= value → SOIL_WET_RAW
+//    3. Submerge sensor tip in water — note raw= value → SOIL_WET_RAW
 //    4. Update defines below and reflash
 // ════════════════════════════════════════════════════════════
-#define SOIL_DRY_RAW  4000    // raw ADC in bone-dry air (your sensor reads ~4095 in air)
+#define SOIL_DRY_RAW  4000    // raw ADC in bone-dry air (~4095 in air)
 #define SOIL_WET_RAW  1100    // raw ADC submerged in water
 
 // ════════════════════════════════════════════════════════════
@@ -144,6 +167,9 @@ void beepBoot()  { beep(80, 3);                          }
 void beepFail()  { beep(500, 2);                         }
 void beepAlert() { beep(250, 4);                         }
 void beepPump()  { beep(60, 2); delay(60); beep(180, 1); }
+// Double-beep = portal open, single long beep = WiFi connected
+void beepPortal()   { beep(300, 2);                      }
+void beepConnected(){ beep(150, 1); delay(80); beep(300, 1); }
 
 // ════════════════════════════════════════════════════════════
 //  PUMP
@@ -239,29 +265,90 @@ bool initCamera() {
 }
 
 // ════════════════════════════════════════════════════════════
-//  WiFi  (exponential back-off)
+//  WiFiManager SETUP  ← NEW v3.0
+//
+//  Tries saved credentials first.
+//  If none / wrong → opens AP "PlantIQ-Setup" + captive portal.
+//  Portal times out after 3 minutes → device reboots and tries again.
 // ════════════════════════════════════════════════════════════
-bool connectWiFi(int maxRetries = 3) {
-  WiFi.mode(WIFI_STA);
+void setupWiFi() {
+  WiFiManager wm;
+
+  // Portal timeout: if nobody configures it within 3 min, reboot
+  wm.setConfigPortalTimeout(180);
+
+  // Show device key on the portal page so farmer can note it down
+  String keyHtml = "<p style='background:#f0f9ff;padding:10px;border-radius:6px;"
+                   "font-family:monospace;font-size:13px;border:1px solid #bfdbfe'>"
+                   "📡 <b>Device Key:</b><br>"
+                   "<span style='color:#1d4ed8;font-size:15px'>" + String(DEVICE_KEY) + "</span><br>"
+                   "<small style='color:#64748b'>Copy this — enter it in PlantIQ dashboard under Fields &amp; Devices</small></p>";
+  WiFiManagerParameter keyDisplay(keyHtml.c_str());
+  wm.addParameter(&keyDisplay);
+
+  // Set custom title
+  wm.setTitle("PlantIQ Setup");
+
+  Serial.println("[WiFi] Starting WiFiManager...");
+  Serial.println("[WiFi] If no saved WiFi — connecting to AP: " PORTAL_AP_NAME);
+
+  // autoConnect: tries saved creds first, otherwise opens portal
+  bool connected = wm.autoConnect(PORTAL_AP_NAME, PORTAL_AP_PASS);
+
+  if (!connected) {
+    Serial.println("[WiFi] Portal timed out — restarting in 3s");
+    beepFail();
+    delay(3000);
+    ESP.restart();
+  }
+
+  Serial.printf("[WiFi] ✓ Connected to: %s\n", WiFi.SSID().c_str());
+  Serial.printf("[WiFi]   IP: %s   RSSI: %d dBm\n",
+                WiFi.localIP().toString().c_str(), WiFi.RSSI());
+  beepConnected();
+}
+
+// ════════════════════════════════════════════════════════════
+//  RESET BUTTON CHECK  ← NEW v3.0
+//  Hold BOOT (GPIO 0) for 3 seconds → wipes WiFi creds → portal
+//  Call at start of every loop() iteration.
+// ════════════════════════════════════════════════════════════
+void checkResetButton() {
+  if (digitalRead(RESET_BTN_PIN) == LOW) {
+    unsigned long held = millis();
+    Serial.println("[RESET] BOOT held — release within 3s to cancel");
+    while (digitalRead(RESET_BTN_PIN) == LOW) {
+      if (millis() - held >= RESET_HOLD_MS) {
+        Serial.println("[RESET] Clearing WiFi credentials and restarting...");
+        beepAlert();
+        WiFiManager wm;
+        wm.resetSettings();       // wipe SSID + password from flash
+        delay(500);
+        ESP.restart();
+      }
+      delay(50);
+    }
+    Serial.println("[RESET] Cancelled (released before 3s)");
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+//  WiFi reconnect (called if connection drops mid-session)
+// ════════════════════════════════════════════════════════════
+bool reconnectWiFi(int maxRetries = 3) {
   for (int a = 1; a <= maxRetries; a++) {
-    Serial.printf("[WiFi] Attempt %d — %s\n", a, WIFI_SSID);
-    WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+    Serial.printf("[WiFi] Reconnect attempt %d...\n", a);
+    WiFi.reconnect();
     int t = 0;
     while (WiFi.status() != WL_CONNECTED && t++ < 20) {
-      delay(500);
-      Serial.print(".");
-      esp_task_wdt_reset();
+      delay(500); esp_task_wdt_reset();
     }
-    Serial.println();
     if (WiFi.status() == WL_CONNECTED) {
-      Serial.printf("[WiFi] Connected  IP:%s  RSSI:%d dBm\n",
-                    WiFi.localIP().toString().c_str(), WiFi.RSSI());
+      Serial.println("[WiFi] Reconnected ✓");
       return true;
     }
-    WiFi.disconnect(true);
     delay(1000 * a);
   }
-  Serial.println("[WiFi] FAILED");
   return false;
 }
 
@@ -288,7 +375,7 @@ ReportResult sendDeviceReport(int moisture, float tempC) {
 
   http.addHeader("x-device-key", DEVICE_KEY);
   http.setReuse(true);
-  http.setTimeout(45000);         // FIX v2.2: 45s for Render cold starts
+  http.setTimeout(45000);         // 45s for Render cold starts
 
   int code;
   if (cameraOK) {
@@ -362,14 +449,18 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("\n╔══════════════════════════╗");
-  Serial.println("║  PlantIQ ESP32-S3 v2.2  ║");
+  Serial.println("║  PlantIQ ESP32-S3 v3.0  ║");
   Serial.println("╚══════════════════════════╝");
+  Serial.println("  WiFiManager enabled — no hard-coded WiFi");
+  Serial.println("  BOOT button (GPIO 0) held 3s = reset WiFi creds");
+  Serial.printf ("  Device key: %s\n\n", DEVICE_KEY);
 
   // Relay OFF (active-LOW — HIGH = off) and buzzer OFF
   pinMode(RELAY_PIN,  OUTPUT); digitalWrite(RELAY_PIN,  HIGH);
   pinMode(BUZZER_PIN, OUTPUT); digitalWrite(BUZZER_PIN, LOW);
+  pinMode(RESET_BTN_PIN, INPUT_PULLUP);   // BOOT button
 
-  // FIX v2.2: watchdog 120s (covers HTTP wait up to 45s + other overhead)
+  // Watchdog 120s (covers HTTP wait + portal open time)
   esp_task_wdt_init(120, true);
   esp_task_wdt_add(NULL);
 
@@ -380,7 +471,7 @@ void setup() {
   if (found == 0) Serial.print("  ← add 4.7k pull-up resistor between DATA and 3.3V!");
   Serial.println();
 
-  // Camera
+  // Camera (init before WiFi so portal page can show camera status)
   cameraOK = initCamera();
 
   // Soil sensor boot reading (useful for calibration)
@@ -388,10 +479,14 @@ void setup() {
   Serial.printf("[SOIL] Boot ADC: %d  (dry=%d wet=%d)\n",
                 bootRaw, SOIL_DRY_RAW, SOIL_WET_RAW);
 
-  // WiFi
-  bool wifiOK = connectWiFi();
-  wifiOK ? beepBoot() : beepFail();
-  if (wifiOK) flushOfflineQueue();
+  // WiFiManager — handles first-time setup + reconnect on boot
+  // This call may block for up to 3 minutes if portal is opened
+  esp_task_wdt_reset();
+  setupWiFi();
+  esp_task_wdt_reset();
+
+  // Flush any offline readings that were queued before WiFi came up
+  flushOfflineQueue();
 
   Serial.println("[SETUP] Done — entering main loop");
 }
@@ -402,15 +497,17 @@ void setup() {
 void loop() {
   esp_task_wdt_reset();
 
+  // ── Check BOOT button for WiFi reset ─────────────────────
+  checkResetButton();
+
   // ── Read sensors ──────────────────────────────────────────
   int   moisture = readMoisturePct();
   float tempC    = readTemperatureC();
   Serial.printf("\n[READ] moisture=%d%%  temp=%.1fC\n", moisture, tempC);
 
   // ── Sensor validity flag ──────────────────────────────────
-  // If DS18B20 is missing (-999), we still send the report so
-  // the dashboard gets camera images + moisture, but ALL pump
-  // actions are blocked until the sensor is properly wired.
+  // If DS18B20 is missing (-999), still send report so dashboard
+  // gets camera + moisture, but ALL pump actions are blocked.
   bool sensorsValid = (tempC > -100.0f);
   if (!sensorsValid) {
     Serial.println("[WARN] DS18B20 missing — report will send but pump is DISABLED");
@@ -438,7 +535,7 @@ void loop() {
       }
       if (r.buzzer && sensorsValid) beepAlert();
     } else {
-      // Backend unreachable — apply local rule (only if sensors valid)
+      // Backend unreachable — local rule fallback
       if (sensorsValid && moisture < MOISTURE_DRY && moisture >= MOISTURE_CRITICAL) {
         Serial.println("[LOCAL] No AI response — watering by local rule");
         pumpRun(6000);
@@ -448,15 +545,15 @@ void loop() {
     Serial.println("[OFFLINE] WiFi lost — queuing reading");
     queueOffline(moisture, tempC);
     if (sensorsValid && moisture < MOISTURE_DRY && moisture >= MOISTURE_CRITICAL) pumpRun(6000);
-    WiFi.reconnect();
+    reconnectWiFi();
   }
 
   // ── Wait until next report ────────────────────────────────
-  // FIX v2.2: plain delay — light sleep was freezing the OV2640 camera
   esp_task_wdt_reset();
   Serial.printf("[WAIT] %ds until next report\n", REPORT_INTERVAL_S);
   for (int i = 0; i < REPORT_INTERVAL_S; i++) {
     delay(1000);
-    esp_task_wdt_reset();   // keep watchdog happy during wait
+    esp_task_wdt_reset();
+    checkResetButton();   // also check reset during wait period
   }
 }
