@@ -836,6 +836,7 @@ function broadcastSSE(data) {
 app.post('/api/device-report', requireDevice, async (req, res) => {
   const moisture_pct  = parseFloat(req.query.moisture    || req.query.moisture_pct || 0);
   const temperature_c = parseFloat(req.query.temperature || req.query.temperature_c || 0);
+  const battery_pct   = req.query.battery !== undefined ? parseInt(req.query.battery) : null;
 
   // Collect raw JPEG body
   const chunks = [];
@@ -892,7 +893,7 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
   // Save to DB
   const reading = db.createDeviceReading({
     device_id: req.deviceRecord ? req.deviceRecord.id : null,
-    moisture_pct, temperature_c, image_path,
+    moisture_pct, temperature_c, battery_pct, image_path,
     ai_health_score:      aiResult.health_score,
     ai_pump:              pump_activated,
     ai_pump_reason:       aiResult.pump_reason,

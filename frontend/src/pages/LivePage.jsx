@@ -274,6 +274,20 @@ export default function LivePage({ isGuest, onAddToast }) {
                       {live.temperature_c > 35 ? 'Too hot' : live.temperature_c < 10 ? 'Too cold' : 'Normal'}
                     </div>
                   </div>
+                  {live.battery_pct != null && (
+                    <div className="sensor-gauge-wrap">
+                      <GaugeSVG
+                        value={live.battery_pct}
+                        max={100}
+                        color={live.battery_pct < 20 ? '#ef4444' : live.battery_pct < 50 ? '#eab308' : '#22c55e'}
+                        label="Battery"
+                        unit="%"
+                      />
+                      <div className="sensor-status" style={{ color: live.battery_pct < 20 ? '#ef4444' : live.battery_pct < 50 ? '#eab308' : '#22c55e' }}>
+                        {live.battery_pct < 20 ? '🔴 Low — charge soon' : live.battery_pct < 50 ? '🟡 Medium' : '🟢 Good'}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>

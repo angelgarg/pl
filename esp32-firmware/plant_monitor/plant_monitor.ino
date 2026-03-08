@@ -132,7 +132,26 @@ struct OfflineReading {
 #define CAM_PCLK_PIN   13
 
 // ════════════════════════════════════════════════════════════
-//  ③ SOIL CALIBRATION
+//  ③ BATTERY VOLTAGE MONITOR
+//  Wire a voltage divider from the Battery+ pad on the Shield V8:
+//
+//    Battery+ ──[100kΩ]──┬──[100kΩ]── GND
+//                         │
+//                       GPIO2  (BATTERY_PIN)
+//
+//  V_ADC  = V_battery / 2  (equal resistor divider)
+//  V_bat  = V_ADC * 2
+//  Range  : 3.0V (empty) → 4.2V (full) per cell (both cells in parallel)
+// ════════════════════════════════════════════════════════════
+#define BATTERY_PIN     2       // ADC pin connected to voltage divider mid-point
+#define BAT_R_RATIO  2.0f       // (R1+R2)/R2  =  (100+100)/100 = 2.0
+#define BAT_ADC_REF  3.3f       // ESP32 ADC reference voltage
+#define BAT_ADC_BITS 4095.0f    // 12-bit ADC
+#define BAT_V_FULL   4.20f      // 100 %
+#define BAT_V_EMPTY  3.00f      //   0 %
+
+// ════════════════════════════════════════════════════════════
+//  ④ SOIL CALIBRATION
 //  HOW TO CALIBRATE:
 //    1. Open Serial Monitor at 115200 baud
 //    2. Hold sensor in dry air — note the raw= value → SOIL_DRY_RAW
@@ -195,6 +214,29 @@ int readMoisturePct() {
   int pct = map(raw, SOIL_DRY_RAW, SOIL_WET_RAW, 0, 100);
   pct = constrain(pct, 0, 100);
   Serial.printf("[SOIL] raw=%d  moisture=%d%%\n", raw, pct);
+  return pct;
+}
+
+// ════════════════════════════════════════════════════════════
+//  BATTERY VOLTAGE  (8-sample average)
+// ════════════════════════════════════════════════════════════
+int readBatteryPct() {
+  // Configure ADC attenuation so 0-3.9V maps to 0-4095
+  analogSetAttenuation(ADC_11db);
+  long sum = 0;
+  for (int i = 0; i < 8; i++) { sum += analogRead(BATTERY_PIN); delay(5); }
+  float raw = (float)(sum / 8);
+
+  // Convert ADC reading → voltage at pin → battery voltage
+  float v_pin = (raw / BAT_ADC_BITS) * BAT_ADC_REF;
+  float v_bat = v_pin * BAT_R_RATIO;
+
+  // Clamp and map to 0-100 %
+  v_bat = constrain(v_bat, BAT_V_EMPTY, BAT_V_FULL);
+  int pct = (int)(((v_bat - BAT_V_EMPTY) / (BAT_V_FULL - BAT_V_EMPTY)) * 100.0f);
+
+  Serial.printf("[BAT] raw=%d  v_pin=%.3fV  v_bat=%.3fV  bat=%d%%\n",
+                (int)raw, v_pin, v_bat, pct);
   return pct;
 }
 
@@ -355,7 +397,7 @@ bool reconnectWiFi(int maxRetries = 3) {
 // ════════════════════════════════════════════════════════════
 //  SEND DEVICE REPORT  — returns ReportResult (AI decision)
 // ════════════════════════════════════════════════════════════
-ReportResult sendDeviceReport(int moisture, float tempC) {
+ReportResult sendDeviceReport(int moisture, float tempC, int batteryPct) {
   ReportResult res = { false, 5000, false, -1, false };
 
   WiFiClientSecure client;
@@ -365,7 +407,8 @@ ReportResult sendDeviceReport(int moisture, float tempC) {
   HTTPClient http;
   String url = String(BACKEND_URL)
              + "/api/device-report?moisture=" + String(moisture)
-             + "&temperature=" + String(tempC, 2);
+             + "&temperature=" + String(tempC, 2)
+             + "&battery=" + String(batteryPct);
 
   Serial.printf("[HTTP] POST %s\n", url.c_str());
   if (!http.begin(client, url)) {
@@ -501,9 +544,11 @@ void loop() {
   checkResetButton();
 
   // ── Read sensors ──────────────────────────────────────────
-  int   moisture = readMoisturePct();
-  float tempC    = readTemperatureC();
-  Serial.printf("\n[READ] moisture=%d%%  temp=%.1fC\n", moisture, tempC);
+  int   moisture   = readMoisturePct();
+  float tempC      = readTemperatureC();
+  int   batteryPct = readBatteryPct();
+  Serial.printf("\n[READ] moisture=%d%%  temp=%.1fC  battery=%d%%\n",
+                moisture, tempC, batteryPct);
 
   // ── Sensor validity flag ──────────────────────────────────
   // If DS18B20 is missing (-999), still send report so dashboard
@@ -524,7 +569,7 @@ void loop() {
   // ── Send to backend / queue offline ───────────────────────
   if (WiFi.status() == WL_CONNECTED) {
     flushOfflineQueue();
-    ReportResult r = sendDeviceReport(moisture, tempC);
+    ReportResult r = sendDeviceReport(moisture, tempC, batteryPct);
     if (r.ok) {
       Serial.printf("[AI] health=%d  pump=%s\n",
                     r.health_score, r.pump ? "YES" : "NO");
@@ -543,7 +588,7 @@ void loop() {
     }
   } else {
     Serial.println("[OFFLINE] WiFi lost — queuing reading");
-    queueOffline(moisture, tempC);
+    queueOffline(moisture, tempC);   // battery not queued (not critical for offline)
     if (sensorsValid && moisture < MOISTURE_DRY && moisture >= MOISTURE_CRITICAL) pumpRun(6000);
     reconnectWiFi();
   }

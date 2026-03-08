@@ -253,6 +253,7 @@ function createDeviceReading(data) {
     device_id:         data.device_id         ?? null,   // null = legacy single-device
     moisture_pct:      data.moisture_pct      ?? 0,
     temperature_c:     data.temperature_c     ?? 0,
+    battery_pct:       data.battery_pct       ?? null,   // null = no voltage divider wired
     image_path:        data.image_path        ?? null,
     ai_health_score:   data.ai_health_score   ?? null,
     ai_pump:           data.ai_pump           ?? false,
