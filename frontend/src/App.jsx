@@ -10,6 +10,7 @@ import AnalyticsPage from './pages/AnalyticsPage';
 import CameraPage from './pages/CameraPage';
 import SettingsPage from './pages/SettingsPage';
 import LivePage from './pages/LivePage';
+import FieldsPage from './pages/FieldsPage';
 import * as api from './api';
 
 function App() {
@@ -174,6 +175,10 @@ function App() {
 
         {currentPage === 'live' && (
           <LivePage isGuest={user?.isGuest} onAddToast={addToast} />
+        )}
+
+        {currentPage === 'fields' && (
+          <FieldsPage isGuest={user?.isGuest} onAddToast={addToast} />
         )}
       </main>
 

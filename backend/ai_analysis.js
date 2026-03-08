@@ -46,7 +46,10 @@ function ruleBasedDecision(moisture_pct, temperature_c) {
     immediate_actions: pump_needed ? ['Activate water pump'] : [],
     recommendations: ['Install camera for AI-powered visual analysis'],
     disease_detected: 'none',
-    growth_stage: 'vegetative'
+    growth_stage: 'vegetative',
+    animal_detected: false,
+    animal_type: 'none',
+    animal_threat_level: 'none'
   };
 }
 
@@ -98,7 +101,10 @@ Respond ONLY with a valid JSON object (no markdown, no extra text):
   "growth_stage": "<seedling|young|vegetative|flowering|fruiting|dormant>",
   "leaf_color": "<description>",
   "leaf_condition": "<healthy|wilting|yellowing|browning|spotted|curling>",
-  "soil_surface_observation": "<what you can see of the soil surface>"
+  "soil_surface_observation": "<what you can see of the soil surface>",
+  "animal_detected": <true|false>,
+  "animal_type": "<none|cat|dog|bird|insect|pest|rodent|livestock|other — describe what you see>",
+  "animal_threat_level": "<none|low|medium|high — low=harmless visitor, medium=could damage plant, high=actively damaging>"
 }`;
 
   try {

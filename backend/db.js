@@ -250,6 +250,7 @@ function createDeviceReading(data) {
   const readings = getDeviceReadings();
   const reading = {
     id: generateId(),
+    device_id:         data.device_id         ?? null,   // null = legacy single-device
     moisture_pct:      data.moisture_pct      ?? 0,
     temperature_c:     data.temperature_c     ?? 0,
     image_path:        data.image_path        ?? null,
@@ -263,6 +264,9 @@ function createDeviceReading(data) {
     ai_disease:        data.ai_disease        ?? 'none',
     ai_growth_stage:   data.ai_growth_stage   ?? 'vegetative',
     ai_immediate_actions: data.ai_immediate_actions ?? [],
+    ai_animal_detected: data.ai_animal_detected ?? false,
+    ai_animal_type:    data.ai_animal_type    ?? 'none',
+    ai_animal_threat:  data.ai_animal_threat  ?? 'none',
     pump_activated:    data.pump_activated    ?? false,
     pump_duration_ms:  data.pump_duration_ms  ?? 0,
     created_at:        new Date().toISOString()
@@ -281,6 +285,143 @@ function getLatestDeviceReading() {
 function getDeviceReadingHistory(limit = 100) {
   const readings = getDeviceReadings();
   return readings.slice(0, Math.min(limit, readings.length));
+}
+
+// ─── FIELDS ──────────────────────────────────────────────────
+
+function getFields() {
+  return readFile('fields.json');
+}
+
+function saveFields(fields) {
+  writeFile('fields.json', fields);
+}
+
+function findFieldById(id) {
+  return getFields().find(f => f.id === id) || null;
+}
+
+function findFieldsByUserId(userId) {
+  return getFields().filter(f => f.user_id === userId);
+}
+
+function createField(data) {
+  const fields = getFields();
+  const field = {
+    id: generateId(),
+    user_id:     data.user_id,
+    name:        data.name        || 'Unnamed Field',
+    description: data.description || '',
+    boundary:    data.boundary    || null,   // GeoJSON polygon coords array or null
+    center_lat:  data.center_lat  || null,
+    center_lng:  data.center_lng  || null,
+    created_at:  new Date().toISOString(),
+    updated_at:  new Date().toISOString()
+  };
+  fields.push(field);
+  saveFields(fields);
+  return field;
+}
+
+function updateField(id, updates) {
+  const fields = getFields();
+  const idx = fields.findIndex(f => f.id === id);
+  if (idx === -1) return null;
+  fields[idx] = { ...fields[idx], ...updates, updated_at: new Date().toISOString() };
+  saveFields(fields);
+  return fields[idx];
+}
+
+function deleteField(id) {
+  const fields = getFields();
+  const idx = fields.findIndex(f => f.id === id);
+  if (idx === -1) return false;
+  fields.splice(idx, 1);
+  saveFields(fields);
+  return true;
+}
+
+// ─── DEVICES ─────────────────────────────────────────────────
+
+function getDevices() {
+  return readFile('devices.json');
+}
+
+function saveDevices(devices) {
+  writeFile('devices.json', devices);
+}
+
+function findDeviceById(id) {
+  return getDevices().find(d => d.id === id) || null;
+}
+
+function findDeviceByKey(key) {
+  return getDevices().find(d => d.device_key === key) || null;
+}
+
+function findDevicesByUserId(userId) {
+  return getDevices().filter(d => d.user_id === userId);
+}
+
+function findDevicesByFieldId(fieldId) {
+  return getDevices().filter(d => d.field_id === fieldId);
+}
+
+function generateDeviceKey() {
+  // Readable key: piq-XXXXX-XXXXX (like GitHub PATs)
+  const part = () => crypto.randomBytes(3).toString('hex').toUpperCase();
+  return `piq-${part()}-${part()}`;
+}
+
+function createDevice(data) {
+  const devices = getDevices();
+  const device_key = generateDeviceKey();
+  const device = {
+    id:           generateId(),
+    user_id:      data.user_id,
+    field_id:     data.field_id   || null,
+    name:         data.name       || 'My Device',
+    device_key,                       // shown ONCE, stored in plain (no secret data)
+    location_lat: data.location_lat || null,
+    location_lng: data.location_lng || null,
+    is_active:    true,
+    last_seen_at: null,
+    created_at:   new Date().toISOString(),
+    updated_at:   new Date().toISOString()
+  };
+  devices.push(device);
+  saveDevices(devices);
+  return { ...device, _key_shown: true }; // flag that key should be revealed this time
+}
+
+function updateDevice(id, updates) {
+  const devices = getDevices();
+  const idx = devices.findIndex(d => d.id === id);
+  if (idx === -1) return null;
+  devices[idx] = { ...devices[idx], ...updates, updated_at: new Date().toISOString() };
+  saveDevices(devices);
+  return devices[idx];
+}
+
+function deleteDevice(id) {
+  const devices = getDevices();
+  const idx = devices.findIndex(d => d.id === id);
+  if (idx === -1) return false;
+  devices.splice(idx, 1);
+  saveDevices(devices);
+  return true;
+}
+
+// ─── DEVICE READINGS (per-device) ────────────────────────────
+
+function getDeviceReadingsByDeviceId(deviceId, limit = 100) {
+  const readings = getDeviceReadings();
+  return readings.filter(r => r.device_id === deviceId).slice(0, limit);
+}
+
+function getLatestDeviceReadingByDeviceId(deviceId) {
+  const readings = getDeviceReadings();
+  return readings.find(r => r.device_id === deviceId) || null;
 }
 
 module.exports = {
@@ -308,5 +449,25 @@ module.exports = {
   // Device readings
   createDeviceReading,
   getLatestDeviceReading,
-  getDeviceReadingHistory
+  getDeviceReadingHistory,
+  getDeviceReadingsByDeviceId,
+  getLatestDeviceReadingByDeviceId,
+  // Fields
+  getFields,
+  saveFields,
+  findFieldById,
+  findFieldsByUserId,
+  createField,
+  updateField,
+  deleteField,
+  // Devices
+  getDevices,
+  saveDevices,
+  findDeviceById,
+  findDeviceByKey,
+  findDevicesByUserId,
+  findDevicesByFieldId,
+  createDevice,
+  updateDevice,
+  deleteDevice
 };

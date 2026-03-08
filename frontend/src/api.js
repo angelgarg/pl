@@ -225,6 +225,84 @@ export const getDeviceStats = async () => {
   return res.json();
 };
 
+// ── Fields endpoints ─────────────────────────────────────────
+
+export const getFields = async () => {
+  const res = await apiFetch('/api/fields');
+  if (!res.ok) throw new Error('Failed to get fields');
+  return res.json();
+};
+
+export const getField = async (id) => {
+  const res = await apiFetch(`/api/fields/${id}`);
+  if (!res.ok) throw new Error('Failed to get field');
+  return res.json();
+};
+
+export const createField = async (data) => {
+  const res = await apiFetch('/api/fields', {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Failed to create field');
+  return json;
+};
+
+export const updateField = async (id, data) => {
+  const res = await apiFetch(`/api/fields/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to update field');
+  return res.json();
+};
+
+export const deleteField = async (id) => {
+  const res = await apiFetch(`/api/fields/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete field');
+  return res.json();
+};
+
+// ── Devices endpoints ─────────────────────────────────────────
+
+export const getDevices = async () => {
+  const res = await apiFetch('/api/devices');
+  if (!res.ok) throw new Error('Failed to get devices');
+  return res.json();
+};
+
+export const createDevice = async (fieldId, data) => {
+  const res = await apiFetch(`/api/fields/${fieldId}/devices`, {
+    method: 'POST',
+    body: JSON.stringify(data)
+  });
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.error || 'Failed to create device');
+  return json; // includes device_key (shown ONCE)
+};
+
+export const updateDevice = async (id, data) => {
+  const res = await apiFetch(`/api/devices/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(data)
+  });
+  if (!res.ok) throw new Error('Failed to update device');
+  return res.json();
+};
+
+export const deleteDevice = async (id) => {
+  const res = await apiFetch(`/api/devices/${id}`, { method: 'DELETE' });
+  if (!res.ok) throw new Error('Failed to delete device');
+  return res.json();
+};
+
+export const getDeviceLatestById = async (deviceId) => {
+  const res = await apiFetch(`/api/devices/${deviceId}/latest`);
+  if (!res.ok) throw new Error('Failed to get device data');
+  return res.json();
+};
+
 export const triggerPump = async (duration_ms = 5000) => {
   const res = await apiFetch('/api/pump/manual', {
     method: 'POST',

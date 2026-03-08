@@ -796,12 +796,25 @@ app.get('/api/alerts', requireAuth, (req, res) => {
 // ESP32-S3 DEVICE API  (no user auth — uses device key)
 // ============================================================
 
-const DEVICE_KEY = process.env.DEVICE_API_KEY || 'plantiq-device-key-change-me';
+const LEGACY_DEVICE_KEY = process.env.DEVICE_API_KEY || 'plantiq-device-key-change-me';
 
+// requireDevice: accepts both the legacy env-var key AND any registered device key
 function requireDevice(req, res, next) {
   const key = req.headers['x-device-key'] || req.query.device_key;
-  if (key !== DEVICE_KEY) return res.status(401).json({ error: 'Invalid device key' });
-  next();
+  if (!key) return res.status(401).json({ error: 'Missing device key' });
+
+  // Check registered devices first
+  const registeredDevice = db.findDeviceByKey(key);
+  if (registeredDevice) {
+    req.deviceRecord = registeredDevice;
+    return next();
+  }
+  // Fall back to legacy env-var key (backward compat)
+  if (key === LEGACY_DEVICE_KEY) {
+    req.deviceRecord = null; // legacy — no DB record
+    return next();
+  }
+  return res.status(401).json({ error: 'Invalid device key' });
 }
 
 // Pending manual pump command (set by dashboard, consumed by ESP32)
@@ -871,19 +884,28 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     ? manualCmd.duration
     : (aiResult.pump_duration_seconds || 7) * 1000;
 
+  // Update device last_seen_at (for registered devices)
+  if (req.deviceRecord) {
+    db.updateDevice(req.deviceRecord.id, { last_seen_at: new Date().toISOString(), is_active: true });
+  }
+
   // Save to DB
   const reading = db.createDeviceReading({
+    device_id: req.deviceRecord ? req.deviceRecord.id : null,
     moisture_pct, temperature_c, image_path,
-    ai_health_score:    aiResult.health_score,
-    ai_pump:            pump_activated,
-    ai_pump_reason:     aiResult.pump_reason,
-    ai_alert_level:     aiResult.alert_level,
-    ai_alerts:          aiResult.alerts          || [],
-    ai_visual_status:   aiResult.visual_status,
-    ai_recommendations: aiResult.recommendations || [],
-    ai_disease:         aiResult.disease_detected,
-    ai_growth_stage:    aiResult.growth_stage,
-    ai_immediate_actions: aiResult.immediate_actions || [],
+    ai_health_score:      aiResult.health_score,
+    ai_pump:              pump_activated,
+    ai_pump_reason:       aiResult.pump_reason,
+    ai_alert_level:       aiResult.alert_level,
+    ai_alerts:            aiResult.alerts             || [],
+    ai_visual_status:     aiResult.visual_status,
+    ai_recommendations:   aiResult.recommendations    || [],
+    ai_disease:           aiResult.disease_detected,
+    ai_growth_stage:      aiResult.growth_stage,
+    ai_immediate_actions: aiResult.immediate_actions  || [],
+    ai_animal_detected:   aiResult.animal_detected    || false,
+    ai_animal_type:       aiResult.animal_type        || 'none',
+    ai_animal_threat:     aiResult.animal_threat_level || 'none',
     pump_activated,
     pump_duration_ms: pump_activated ? pump_duration_ms : 0
   });
@@ -891,13 +913,20 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
   // Push to all live-stream clients
   broadcastSSE(reading);
 
+  const buzzer = aiResult.alert_level === 'high'
+    || aiResult.alert_level === 'critical'
+    || (aiResult.animal_detected && aiResult.animal_threat_level !== 'none');
+
   res.json({
-    pump:        pump_activated,
-    duration_ms: pump_activated ? pump_duration_ms : 0,
-    reason:      aiResult.pump_reason,
-    health_score: aiResult.health_score,
-    alert_level: aiResult.alert_level,
-    buzzer:      aiResult.alert_level === 'high' || aiResult.alert_level === 'critical'
+    pump:             pump_activated,
+    duration_ms:      pump_activated ? pump_duration_ms : 0,
+    reason:           aiResult.pump_reason,
+    health_score:     aiResult.health_score,
+    alert_level:      aiResult.alert_level,
+    buzzer,
+    animal_detected:  aiResult.animal_detected  || false,
+    animal_type:      aiResult.animal_type       || 'none',
+    animal_threat:    aiResult.animal_threat_level || 'none'
   });
 });
 
@@ -962,6 +991,159 @@ app.get('/api/device/stats', requireAuth, (req, res) => {
     pump_activations_last_100: pumpCount,
     last_updated: latest.created_at
   });
+});
+
+// ============================================================
+// FIELDS ROUTES  (commercial multi-field feature)
+// ============================================================
+
+app.get('/api/fields', requireAuth, (req, res) => {
+  const fields = db.findFieldsByUserId(req.user.id);
+  // Attach device count per field
+  const result = fields.map(f => ({
+    ...f,
+    device_count: db.findDevicesByFieldId(f.id).length
+  }));
+  res.json(result);
+});
+
+app.post('/api/fields', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot create fields' });
+  const { name, description, boundary, center_lat, center_lng } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Field name required' });
+  const field = db.createField({
+    user_id: req.user.id,
+    name: name.trim(),
+    description: description || '',
+    boundary: boundary || null,
+    center_lat: center_lat || null,
+    center_lng: center_lng || null
+  });
+  res.status(201).json(field);
+});
+
+app.get('/api/fields/:id', requireAuth, (req, res) => {
+  const field = db.findFieldById(req.params.id);
+  if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  const devices = db.findDevicesByFieldId(field.id).map(d => ({
+    ...d,
+    device_key: undefined   // never expose key in list
+  }));
+  res.json({ ...field, devices });
+});
+
+app.put('/api/fields/:id', requireAuth, (req, res) => {
+  const field = db.findFieldById(req.params.id);
+  if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot edit fields' });
+  const { name, description, boundary, center_lat, center_lng } = req.body;
+  const updated = db.updateField(req.params.id, {
+    ...(name        !== undefined && { name: name.trim() }),
+    ...(description !== undefined && { description }),
+    ...(boundary    !== undefined && { boundary }),
+    ...(center_lat  !== undefined && { center_lat }),
+    ...(center_lng  !== undefined && { center_lng })
+  });
+  res.json(updated);
+});
+
+app.delete('/api/fields/:id', requireAuth, (req, res) => {
+  const field = db.findFieldById(req.params.id);
+  if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot delete fields' });
+  db.deleteField(req.params.id);
+  res.json({ success: true });
+});
+
+// ============================================================
+// DEVICES ROUTES  (commercial multi-device feature)
+// ============================================================
+
+app.get('/api/fields/:fieldId/devices', requireAuth, (req, res) => {
+  const field = db.findFieldById(req.params.fieldId);
+  if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  const devices = db.findDevicesByFieldId(field.id).map(d => ({
+    ...d,
+    device_key: undefined  // never expose key in list
+  }));
+  res.json(devices);
+});
+
+// Create device — returns key ONCE
+app.post('/api/fields/:fieldId/devices', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot create devices' });
+  const field = db.findFieldById(req.params.fieldId);
+  if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  const { name, location_lat, location_lng } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Device name required' });
+  const device = db.createDevice({
+    user_id: req.user.id,
+    field_id: field.id,
+    name: name.trim(),
+    location_lat: location_lat || null,
+    location_lng: location_lng || null
+  });
+  // Return key ONCE (included in device object from createDevice)
+  console.log(`[DEVICE] Created "${device.name}" key=${device.device_key}`);
+  res.status(201).json(device); // _key_shown: true is part of the object
+});
+
+// Also allow creating a device without a field
+app.post('/api/devices', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot create devices' });
+  const { name, field_id, location_lat, location_lng } = req.body;
+  if (!name || !name.trim()) return res.status(400).json({ error: 'Device name required' });
+  if (field_id) {
+    const field = db.findFieldById(field_id);
+    if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
+  }
+  const device = db.createDevice({
+    user_id: req.user.id,
+    field_id: field_id || null,
+    name: name.trim(),
+    location_lat: location_lat || null,
+    location_lng: location_lng || null
+  });
+  console.log(`[DEVICE] Created "${device.name}" key=${device.device_key}`);
+  res.status(201).json(device);
+});
+
+app.get('/api/devices', requireAuth, (req, res) => {
+  const devices = db.findDevicesByUserId(req.user.id).map(d => ({
+    ...d,
+    device_key: undefined  // never expose key in list
+  }));
+  res.json(devices);
+});
+
+app.put('/api/devices/:id', requireAuth, (req, res) => {
+  const device = db.findDeviceById(req.params.id);
+  if (!device || device.user_id !== req.user.id) return res.status(404).json({ error: 'Device not found' });
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot edit devices' });
+  const { name, location_lat, location_lng, field_id, is_active } = req.body;
+  const updated = db.updateDevice(req.params.id, {
+    ...(name         !== undefined && { name: name.trim() }),
+    ...(location_lat !== undefined && { location_lat }),
+    ...(location_lng !== undefined && { location_lng }),
+    ...(field_id     !== undefined && { field_id }),
+    ...(is_active    !== undefined && { is_active })
+  });
+  res.json({ ...updated, device_key: undefined });
+});
+
+app.delete('/api/devices/:id', requireAuth, (req, res) => {
+  const device = db.findDeviceById(req.params.id);
+  if (!device || device.user_id !== req.user.id) return res.status(404).json({ error: 'Device not found' });
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot delete devices' });
+  db.deleteDevice(req.params.id);
+  res.json({ success: true });
+});
+
+// Get latest reading for a specific device
+app.get('/api/devices/:id/latest', requireAuth, (req, res) => {
+  const device = db.findDeviceById(req.params.id);
+  if (!device || device.user_id !== req.user.id) return res.status(404).json({ error: 'Device not found' });
+  res.json(db.getLatestDeviceReadingByDeviceId(device.id) || {});
 });
 
 // ============================================================

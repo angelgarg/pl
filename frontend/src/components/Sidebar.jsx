@@ -6,6 +6,7 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
 
   const navItems = [
     { id: 'live',      label: 'Live Monitor', icon: '📡' },
+    { id: 'fields',    label: 'Fields & Devices', icon: '🌾' },
     { id: 'dashboard', label: 'Dashboard',    icon: '📊' },
     { id: 'my-plants', label: 'My Plants',    icon: '🌿' },
     { id: 'camera',    label: 'Camera',       icon: '📷' },

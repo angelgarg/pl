@@ -81,11 +81,16 @@ export default function LivePage({ isGuest, onAddToast }) {
   const [pumpLoading, setPumpLoading] = useState(false);
   const [pumpDuration, setPumpDuration] = useState(5);
   const [imgError, setImgError]       = useState(false);
+  const [devices, setDevices] = useState([]);
+  const [selectedDeviceId, setSelectedDeviceId] = useState('all');
   const esRef = useRef(null);
 
   const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.com';
 
   useEffect(() => {
+    // Load registered devices for selector
+    api.getDevices().then(setDevices).catch(() => {});
+
     // Fetch history on mount
     api.getDeviceHistory(100).then(h => setHistory(h || [])).catch(() => {});
     api.getDeviceStats().then(setStats).catch(() => {});
@@ -106,8 +111,14 @@ export default function LivePage({ isGuest, onAddToast }) {
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        setLive(data);
-        setImgError(false);
+        // Filter by selected device if one is chosen
+        setSelectedDeviceId(sel => {
+          if (sel === 'all' || !sel || data.device_id === sel || (!data.device_id && sel === 'legacy')) {
+            setLive(data);
+            setImgError(false);
+          }
+          return sel;
+        });
         setHistory(prev => {
           const next = [data, ...prev.filter(r => r.id !== data.id)];
           return next.slice(0, 500);
@@ -134,8 +145,15 @@ export default function LivePage({ isGuest, onAddToast }) {
     }
   }
 
+  // Filter history by selected device
+  const filteredHistory = selectedDeviceId === 'all'
+    ? history
+    : selectedDeviceId === 'legacy'
+      ? history.filter(r => !r.device_id)
+      : history.filter(r => r.device_id === selectedDeviceId);
+
   // Chart data — last 50 readings reversed (oldest first)
-  const chartData = [...history].reverse().slice(-50).map(r => ({
+  const chartData = [...filteredHistory].reverse().slice(-50).map(r => ({
     t: fmtTime(r.created_at),
     moisture: r.moisture_pct,
     temp: r.temperature_c,
@@ -159,6 +177,28 @@ export default function LivePage({ isGuest, onAddToast }) {
           {connected ? 'Live' : 'Connecting…'}
         </div>
       </div>
+
+      {/* ── Device selector ── */}
+      {devices.length > 0 && (
+        <div className="live-device-selector">
+          <label className="device-sel-label">📡 Device:</label>
+          <select
+            className="device-sel-dropdown"
+            value={selectedDeviceId}
+            onChange={e => {
+              setSelectedDeviceId(e.target.value);
+              setLive(null);
+              setImgError(false);
+            }}
+          >
+            <option value="all">All Devices</option>
+            {devices.map(d => (
+              <option key={d.id} value={d.id}>{d.name}</option>
+            ))}
+            <option value="legacy">Legacy / Unregistered</option>
+          </select>
+        </div>
+      )}
 
       {/* ── Guest notice ── */}
       {isGuest && (
@@ -414,7 +454,7 @@ export default function LivePage({ isGuest, onAddToast }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {history.slice(0, 20).map(r => (
+                  {filteredHistory.slice(0, 20).map(r => (
                     <tr key={r.id}>
                       <td>{fmtTime(r.created_at)}</td>
                       <td>{r.moisture_pct}%</td>
