@@ -24,7 +24,7 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
 
       <nav className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
-          <div className="sidebar-logo">🌿 PlantIQ</div>
+          <div className="sidebar-logo">🌿 BhoomiIQ</div>
         </div>
 
         {isGuest && (

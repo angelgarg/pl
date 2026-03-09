@@ -70,7 +70,7 @@ function parseCookies(req) {
 function authMiddleware(secret) {
   return (req, res, next) => {
     const cookies = parseCookies(req);
-    const token = cookies.plantiq_token;
+    const token = cookies.bhoomiq_token;
     if (!token) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
@@ -87,7 +87,7 @@ function authMiddleware(secret) {
 function optionalAuth(secret) {
   return (req, res, next) => {
     const cookies = parseCookies(req);
-    const token = cookies.plantiq_token;
+    const token = cookies.bhoomiq_token;
     if (token) {
       const userId = verifyToken(token, secret);
       if (userId) {

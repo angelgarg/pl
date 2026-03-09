@@ -81,7 +81,7 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
         <div className="empty-state">
           <div className="empty-state-emoji">🌱</div>
           <h2 className="empty-state-title">No plants yet</h2>
-          <p className="empty-state-subtitle">Add your first plant to get started with PlantIQ</p>
+          <p className="empty-state-subtitle">Add your first plant to get started with BhoomiIQ</p>
           {!isGuest && (
             <button
               className="empty-state-btn"

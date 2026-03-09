@@ -94,7 +94,7 @@ function App() {
     return (
       <div className="loading-screen">
         <div className="loading-spinner">🌿</div>
-        <p>PlantIQ</p>
+        <p>BhoomiIQ</p>
       </div>
     );
   }

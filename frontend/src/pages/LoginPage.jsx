@@ -57,7 +57,7 @@ export default function LoginPage({ onLogin, onSwitchToRegister }) {
       <div className="login-hero">
         <div className="login-hero-content">
           <div className="login-hero-emoji">🌿</div>
-          <h1 className="login-hero-title">PlantIQ</h1>
+          <h1 className="login-hero-title">BhoomiIQ</h1>
           <p className="login-hero-subtitle">Monitor your plants with AI-powered insights</p>
         </div>
       </div>

@@ -12,7 +12,7 @@ const { calculateHealthScore, analyzeImage, analyzeDeviceReport } = require('./a
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const SECRET_KEY = process.env.SECRET_KEY || 'super-secret-dev-key-change-in-production-plantiq-2024';
+const SECRET_KEY = process.env.SECRET_KEY || 'super-secret-dev-key-change-in-production-bhoomiq-2024';
 
 // Middleware — allow localhost + any *.vercel.app + optional FRONTEND_URL env var
 const allowedOrigins = [
@@ -113,7 +113,7 @@ function extractToken(req) {
   }
   // 2. Cookie fallback (used by same-origin / local dev)
   const cookies = parseCookies(req);
-  return cookies.plantiq_token || null;
+  return cookies.bhoomiq_token || null;
 }
 
 // Auth middleware — checks Bearer header first, then cookie
@@ -201,7 +201,7 @@ app.post('/auth/register', async (req, res) => {
     const token = createToken(user.id, SECRET_KEY);
 
     // Set cookie (SameSite=None; Secure needed for cross-origin Vercel→Render)
-    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
+    res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
 
     // Also return token in body so frontend can store in localStorage (cross-origin safe)
     res.json({
@@ -240,7 +240,7 @@ app.post('/auth/login', async (req, res) => {
     const token = createToken(user.id, SECRET_KEY);
 
     // Set cookie (SameSite=None; Secure for cross-origin)
-    res.setHeader('Set-Cookie', `plantiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
+    res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
 
     // Also return token in body for localStorage storage
     res.json({
@@ -258,7 +258,7 @@ app.post('/auth/login', async (req, res) => {
 });
 
 app.post('/auth/logout', (req, res) => {
-  res.setHeader('Set-Cookie', 'plantiq_token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax');
+  res.setHeader('Set-Cookie', 'bhoomiq_token=; Path=/; HttpOnly; Max-Age=0; SameSite=Lax');
   res.json({ success: true });
 });
 
@@ -273,7 +273,7 @@ app.post('/auth/guest', async (req, res) => {
       const fakeHash = await hashPassword(crypto.randomBytes(32).toString('hex'));
       guest = db.createUser({
         username: GUEST_USERNAME,
-        email: 'guest@plantiq.demo',
+        email: 'guest@bhoomiq.demo',
         password_hash: fakeHash
       });
 
@@ -796,7 +796,7 @@ app.get('/api/alerts', requireAuth, (req, res) => {
 // ESP32-S3 DEVICE API  (no user auth — uses device key)
 // ============================================================
 
-const LEGACY_DEVICE_KEY = process.env.DEVICE_API_KEY || 'plantiq-device-key-change-me';
+const LEGACY_DEVICE_KEY = process.env.DEVICE_API_KEY || 'bhoomiq-device-key-change-me';
 
 // requireDevice: accepts both the legacy env-var key AND any registered device key
 function requireDevice(req, res, next) {
@@ -1328,9 +1328,12 @@ app.use((err, req, res, next) => {
 });
 
 // ============================================================
-// START SERVER
+// START SERVER (after DB is ready)
 // ============================================================
 
-app.listen(PORT, () => {
-  console.log(`PlantIQ backend running on http://localhost:${PORT}`);
-});
+(async () => {
+  await db.initDatabase();   // load data from MongoDB (or JSON files) into memory
+  app.listen(PORT, () => {
+    console.log(`BhoomiIQ backend running on http://localhost:${PORT}`);
+  });
+})();

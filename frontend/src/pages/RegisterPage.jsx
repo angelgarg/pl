@@ -38,14 +38,14 @@ export default function RegisterPage({ onLogin, onSwitchToLogin }) {
       <div className="login-hero">
         <div className="login-hero-content">
           <div className="login-hero-emoji">🌿</div>
-          <h1 className="login-hero-title">PlantIQ</h1>
+          <h1 className="login-hero-title">BhoomiIQ</h1>
           <p className="login-hero-subtitle">Monitor your plants with AI-powered insights</p>
         </div>
       </div>
 
       <div className="login-card">
         <h2 className="login-title">Create Account</h2>
-        <p className="login-subtitle">Join PlantIQ today</p>
+        <p className="login-subtitle">Join BhoomiIQ today</p>
 
         {error && <div className="login-error">{error}</div>}
         {statusMsg && <div className="login-status">{statusMsg}</div>}

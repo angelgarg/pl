@@ -70,7 +70,7 @@ async function analyzeDeviceReport(imageBase64, sensorData) {
     moisture_pct < 50 ? 'ADEQUATE' :
     moisture_pct < 70 ? 'MOIST' : 'WET / POSSIBLY OVERWATERED';
 
-  const prompt = `You are PlantIQ, an expert AI plant health agent. Analyze the plant image together with the sensor data below and return a complete health report and action plan.
+  const prompt = `You are BhoomiIQ, an expert AI plant health agent. Analyze the plant image together with the sensor data below and return a complete health report and action plan.
 
 SENSOR DATA (recorded ${now}):
 - Soil Moisture: ${moisture_pct}% → Status: ${moistureStatus}
@@ -112,7 +112,7 @@ Respond ONLY with a valid JSON object (no markdown, no extra text):
       messages: [
         {
           role: 'system',
-          content: 'You are PlantIQ, an expert AI plant health monitoring agent. You analyze plant images combined with sensor data to make precise, actionable recommendations. Always respond with valid JSON only.'
+          content: 'You are BhoomiIQ, an expert AI plant health monitoring agent. You analyze plant images combined with sensor data to make precise, actionable recommendations. Always respond with valid JSON only.'
         },
         {
           role: 'user',

@@ -57,9 +57,9 @@ export default function SettingsPage({ user }) {
       </div>
 
       <div className="settings-section">
-        <h3>About PlantIQ</h3>
+        <h3>About BhoomiIQ</h3>
         <div className="settings-card">
-          <p>PlantIQ v1.0</p>
+          <p>BhoomiIQ v1.0</p>
           <p>Smart plant monitoring with AI-powered insights</p>
           <a href="#" className="settings-link">Privacy Policy</a>
           <a href="#" className="settings-link">Terms of Service</a>

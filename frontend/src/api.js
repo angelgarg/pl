@@ -1,8 +1,8 @@
 const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.com';
 
 // Token stored in localStorage (works cross-origin, no cookie issues)
-export const getToken = () => localStorage.getItem('plantiq_token');
-export const setToken = (t) => t ? localStorage.setItem('plantiq_token', t) : localStorage.removeItem('plantiq_token');
+export const getToken = () => localStorage.getItem('bhoomiq_token');
+export const setToken = (t) => t ? localStorage.setItem('bhoomiq_token', t) : localStorage.removeItem('bhoomiq_token');
 
 // Wake up the Render backend (it sleeps after 15 min on free tier).
 // Call this before auth so the user gets a friendly message instead of an error.
