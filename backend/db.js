@@ -88,7 +88,12 @@ function persistToMongo(collectionName, data) {
     try {
       const col = mongoDB.collection(collectionName);
       await col.deleteMany({});
-      if (data.length > 0) await col.insertMany(data);
+      if (data.length > 0) {
+        // Strip _id before inserting — MongoDB driver mutates input objects
+        // by adding _id, which causes duplicate key errors on subsequent writes
+        const docs = data.map(({ _id, ...doc }) => doc);
+        await col.insertMany(docs);
+      }
     } catch (err) {
       console.error(`[DB] MongoDB write error (${collectionName}):`, err.message);
     }
