@@ -3231,3 +3231,28 @@ input:focus, select:focus, textarea:focus {
   margin-top: 6px;
   opacity: 0.75;
 }
+
+/* ─── Add Plant button in Dashboard header ─────────────────────────────── */
+.btn-add-plant {
+  padding: 10px 20px;
+  background: var(--primary);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  white-space: nowrap;
+  align-self: center;
+  transition: background 0.18s, transform 0.12s;
+  box-shadow: 0 2px 8px rgba(56, 142, 60, 0.3);
+}
+
+.btn-add-plant:hover {
+  background: var(--primary-dark, #2e7d32);
+  transform: translateY(-1px);
+}
+
+.btn-add-plant:active {
+  transform: translateY(0);
+}

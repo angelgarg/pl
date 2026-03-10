@@ -172,6 +172,7 @@ function AppInner() {
           <Dashboard
             onNavigateToPlant={handleNavigateToPlant}
             onAddNote={handleAddNote}
+            onAddPlant={() => setCurrentPage('add-plant')}
             isGuest={user?.isGuest}
           />
         )}

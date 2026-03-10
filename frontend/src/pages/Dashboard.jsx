@@ -3,7 +3,7 @@ import PlantCard from '../components/PlantCard';
 import * as api from '../api';
 import { useLang } from '../LangContext';
 
-export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
+export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, isGuest }) {
   const { t } = useLang();
   const [plants, setPlants] = useState([]);
   const [stats, setStats] = useState(null);
@@ -52,8 +52,15 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
         </div>
       )}
       <div className="page-header">
-        <h1 className="page-title">{t('dashboardTitle')}</h1>
-        <p className="page-subtitle">{t('dashboardSubtitle')}</p>
+        <div>
+          <h1 className="page-title">{t('dashboardTitle')}</h1>
+          <p className="page-subtitle">{t('dashboardSubtitle')}</p>
+        </div>
+        {!isGuest && (
+          <button className="btn-add-plant" onClick={onAddPlant}>
+            + Add Plant
+          </button>
+        )}
       </div>
 
       {error && <div className="error-message">{error}</div>}
@@ -85,7 +92,7 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
           <h2 className="empty-state-title">{t('noPlantsTitle')}</h2>
           <p className="empty-state-subtitle">{t('noPlantsText')}</p>
           {!isGuest && (
-            <button className="empty-state-btn" onClick={() => {}}>
+            <button className="empty-state-btn" onClick={onAddPlant}>
               {t('addFirstPlant')}
             </button>
           )}
