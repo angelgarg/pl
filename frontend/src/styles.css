@@ -1912,6 +1912,23 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 12px;
   box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  white-space: nowrap;
+}
+
+.draw-finish-btn {
+  background: white;
+  color: #16a34a;
+  border: none;
+  border-radius: 12px;
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.draw-finish-btn:hover {
+  opacity: 0.85;
 }
 
 /* Fields list sidebar */

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useImperativeHandle, forwardRef } from 'react';
 import * as api from '../api';
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -22,7 +22,7 @@ function alertColor(level) {
 
 // ─── Map Component (Leaflet) ───────────────────────────────────
 
-function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolygonComplete }) {
+const FieldMap = forwardRef(function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolygonComplete }, ref) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const layersRef = useRef([]);
@@ -36,7 +36,8 @@ function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolyg
 
     const map = window.L.map(mapRef.current, {
       center: [20.5937, 78.9629], // India default
-      zoom: 5
+      zoom: 5,
+      doubleClickZoom: false  // prevent zoom on double-click so finish works cleanly
     });
 
     window.L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -80,6 +81,29 @@ function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolyg
     return () => map.off('click', handleClick);
   }, [drawMode]);
 
+  // Shared finish-drawing logic — also exposed via ref for the "Finish" button
+  const executeFinish = useCallback(() => {
+    const map = mapInstanceRef.current;
+    if (!map || !drawPointsRef.current.length) return;
+    if (drawPointsRef.current.length >= 3) {
+      const coords = [...drawPointsRef.current];
+      const center = coords.reduce(
+        (acc, p) => [acc[0] + p[0] / coords.length, acc[1] + p[1] / coords.length],
+        [0, 0]
+      );
+      onPolygonComplete(coords, center[0], center[1]);
+    }
+    // Clear drawing layers regardless
+    drawLayersRef.current.forEach(l => map.removeLayer(l));
+    drawLayersRef.current = [];
+    drawPointsRef.current = [];
+  }, [onPolygonComplete]);
+
+  // Expose finishDraw to parent via ref
+  useImperativeHandle(ref, () => ({
+    finishDraw: executeFinish
+  }), [executeFinish]);
+
   // Complete drawing on double-click
   useEffect(() => {
     const map = mapInstanceRef.current;
@@ -87,20 +111,12 @@ function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolyg
 
     function handleDblClick(e) {
       if (!drawMode) return;
-      if (drawPointsRef.current.length >= 3) {
-        const coords = [...drawPointsRef.current];
-        const center = coords.reduce((acc, p) => [acc[0] + p[0] / coords.length, acc[1] + p[1] / coords.length], [0, 0]);
-        onPolygonComplete(coords, center[0], center[1]);
-      }
-      // Clear drawing layers
-      drawLayersRef.current.forEach(l => map.removeLayer(l));
-      drawLayersRef.current = [];
-      drawPointsRef.current = [];
+      executeFinish();
     }
 
     map.on('dblclick', handleDblClick);
     return () => map.off('dblclick', handleDblClick);
-  }, [drawMode, onPolygonComplete]);
+  }, [drawMode, executeFinish]);
 
   // Render fields + devices on map
   useEffect(() => {
@@ -147,7 +163,7 @@ function FieldMap({ fields, devices, onFieldClick, onMapClick, drawMode, onPolyg
       style={{ cursor: drawMode ? 'crosshair' : 'grab' }}
     />
   );
-}
+});
 
 // ─── Key reveal modal ──────────────────────────────────────────
 
@@ -398,6 +414,7 @@ export default function FieldsPage({ isGuest, onAddToast }) {
   const [drawMode, setDrawMode] = useState(false);
   const [pendingBoundary, setPendingBoundary] = useState(null);
   const [pendingCenter, setPendingCenter] = useState(null);
+  const fieldMapRef = useRef(null); // ref to FieldMap component (for finishDraw)
 
   const [selectedField, setSelectedField] = useState(null);
   const [showAddDevice, setShowAddDevice] = useState(false);
@@ -506,11 +523,18 @@ export default function FieldsPage({ isGuest, onAddToast }) {
         <div className="fields-map-wrap">
           {drawMode && (
             <div className="draw-banner">
-              ✏️ Click to add boundary points · Double-click to finish
-              <button className="btn-link" onClick={() => setDrawMode(false)}>Cancel</button>
+              📍 Click to add points on the map
+              <button
+                className="draw-finish-btn"
+                onClick={() => fieldMapRef.current?.finishDraw()}
+              >
+                ✅ Finish
+              </button>
+              <button className="btn-link" onClick={() => { setDrawMode(false); }}>Cancel</button>
             </div>
           )}
           <FieldMap
+            ref={fieldMapRef}
             fields={fields}
             devices={devices}
             onFieldClick={setSelectedField}
