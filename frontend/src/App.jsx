@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
+import { LangProvider, useLang } from './LangContext';
 import Sidebar from './components/Sidebar';
 import Toast from './components/Toast';
+import ChatWidget from './components/ChatWidget';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import Dashboard from './pages/Dashboard';
@@ -13,7 +15,9 @@ import LivePage from './pages/LivePage';
 import FieldsPage from './pages/FieldsPage';
 import * as api from './api';
 
-function App() {
+// Inner app — has access to LangContext
+function AppInner() {
+  const { t } = useLang();
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
   const [currentPage, setCurrentPage] = useState('login');
@@ -94,7 +98,7 @@ function App() {
     return (
       <div className="loading-screen">
         <div className="loading-spinner">🌿</div>
-        <p>BhoomiIQ</p>
+        <p>{t('appName')}</p>
       </div>
     );
   }
@@ -128,7 +132,7 @@ function App() {
     );
   }
 
-  // Logged in - show sidebar + page
+  // Logged in — show sidebar + page + chat widget
   return (
     <div className="app-layout">
       <Sidebar
@@ -182,6 +186,9 @@ function App() {
         )}
       </main>
 
+      {/* Floating AI Chat Widget — always visible when logged in */}
+      <ChatWidget />
+
       <div className="toasts-container">
         {toasts.map(toast => (
           <Toast
@@ -193,6 +200,15 @@ function App() {
         ))}
       </div>
     </div>
+  );
+}
+
+// Root — wraps everything with LangProvider
+function App() {
+  return (
+    <LangProvider>
+      <AppInner />
+    </LangProvider>
   );
 }
 

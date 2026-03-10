@@ -1308,6 +1308,145 @@ app.post('/api/pump-override', async (req, res) => {
   }
 });
 
+// ============================================================
+// AI CHAT — /api/chat
+// Interactive "Ask BhoomiIQ" — All 10 major Indian languages
+// ============================================================
+
+// Language-specific system prompts for all 10 supported languages
+const CHAT_SYSTEM_PROMPTS = {
+  en: `You are BhoomiIQ AI — an expert agricultural assistant. You help farmers with questions about plant health, soil conditions, irrigation, pest control, and crop care. Always respond in clear, simple English. Keep answers concise and practical.`,
+  hi: `आप BhoomiIQ AI हैं — एक विशेषज्ञ कृषि सहायक। आप किसानों को उनके पौधों, मिट्टी की सेहत, सिंचाई, कीट नियंत्रण और फसल देखभाल के बारे में सलाह देते हैं। हमेशा सरल हिंदी में जवाब दें। छोटे और स्पष्ट जवाब दें।`,
+  mr: `तुम्ही BhoomiIQ AI आहात — एक तज्ञ कृषी सहाय्यक. तुम्ही शेतकऱ्यांना वनस्पतींचे आरोग्य, माती, सिंचन, कीड नियंत्रण आणि पीक काळजी याबद्दल मार्गदर्शन करता. नेहमी सोप्या मराठीत उत्तर द्या. संक्षिप्त आणि व्यावहारिक उत्तरे द्या.`,
+  pa: `ਤੁਸੀਂ BhoomiIQ AI ਹੋ — ਇੱਕ ਮਾਹਿਰ ਖੇਤੀਬਾੜੀ ਸਹਾਇਕ। ਤੁਸੀਂ ਕਿਸਾਨਾਂ ਨੂੰ ਪੌਦਿਆਂ ਦੀ ਸਿਹਤ, ਮਿੱਟੀ, ਸਿੰਚਾਈ, ਕੀਟ ਨਿਯੰਤਰਣ ਅਤੇ ਫ਼ਸਲ ਦੀ ਦੇਖਭਾਲ ਬਾਰੇ ਮਦਦ ਕਰਦੇ ਹੋ। ਹਮੇਸ਼ਾ ਸਰਲ ਪੰਜਾਬੀ ਵਿੱਚ ਜਵਾਬ ਦਿਓ। ਸੰਖੇਪ ਅਤੇ ਅਮਲੀ ਜਵਾਬ ਦਿਓ।`,
+  ta: `நீங்கள் BhoomiIQ AI — ஒரு நிபுணர் விவசாய உதவியாளர். நீங்கள் விவசாயிகளுக்கு தாவர ஆரோக்கியம், மண், நீர்ப்பாசனம், பூச்சி கட்டுப்பாடு மற்றும் பயிர் பராமரிப்பு பற்றி உதவுகிறீர்கள். எப்போதும் எளிய தமிழில் பதில் சொல்லுங்கள். சுருக்கமான மற்றும் நடைமுறை பதில்கள் கொடுங்கள்.`,
+  te: `మీరు BhoomiIQ AI — ఒక నిపుణ వ్యవసాయ సహాయకుడు. మీరు రైతులకు మొక్కల ఆరోగ్యం, నేల, నీటిపారుదల, చీడపీడల నియంత్రణ మరియు పంట సంరక్షణ గురించి సహాయం చేస్తారు. ఎల్లప్పుడూ సరళమైన తెలుగులో జవాబు ఇవ్వండి. సంక్షిప్తంగా మరియు ఆచరణాత్మకంగా జవాబు ఇవ్వండి.`,
+  kn: `ನೀವು BhoomiIQ AI — ಒಬ್ಬ ತಜ್ಞ ಕೃಷಿ ಸಹಾಯಕ. ನೀವು ರೈತರಿಗೆ ಸಸ್ಯ ಆರೋಗ್ಯ, ಮಣ್ಣು, ನೀರಾವರಿ, ಕೀಟ ನಿಯಂತ್ರಣ ಮತ್ತು ಬೆಳೆ ಆರೈಕೆ ಬಗ್ಗೆ ಸಹಾಯ ಮಾಡುತ್ತೀರಿ. ಯಾವಾಗಲೂ ಸರಳ ಕನ್ನಡದಲ್ಲಿ ಉತ್ತರಿಸಿ. ಸಂಕ್ಷಿಪ್ತ ಮತ್ತು ಪ್ರಾಯೋಗಿಕ ಉತ್ತರಗಳನ್ನು ನೀಡಿ.`,
+  gu: `તમે BhoomiIQ AI છો — એક નિષ્ણાત કૃષિ સહાયક. તમે ખેડૂતોને છોડ, માટી, સિંચાઈ, જીવાત નિયંત્રણ અને પાકની સંભાળ અંગે મદદ કરો છો. હંમેશા સરળ ગુજરાતીમાં જવાબ આપો. સંક્ષિપ્ત અને વ્યવહારુ જવાબ આપો.`,
+  bn: `আপনি BhoomiIQ AI — একজন বিশেষজ্ঞ কৃষি সহকারী। আপনি কৃষকদের গাছের স্বাস্থ্য, মাটি, সেচ, কীটপতঙ্গ নিয়ন্ত্রণ এবং ফসলের যত্ন সম্পর্কে সাহায্য করেন। সর্বদা সহজ বাংলায় উত্তর দিন। সংক্ষিপ্ত ও ব্যবহারিক উত্তর দিন।`,
+  ml: `നിങ്ങൾ BhoomiIQ AI ആണ് — ഒരു വിദഗ്ധ കൃഷി സഹായി. നിങ്ങൾ കർഷകർക്ക് ചെടി ആരോഗ്യം, മണ്ണ്, ജലസേചനം, കീടനിയന്ത്രണം, വിള പരിചരണം എന്നിവയിൽ സഹായിക്കുന്നു. എല്ലായ്‌പ്പോഴും ലളിതമായ മലയാളത്തിൽ ഉത്തരം നൽകുക. ചുരുക്കവും പ്രായോഗികവുമായ ഉത്തരങ്ങൾ നൽകുക.`,
+};
+
+// Fallback responses when API key is not set (per language)
+const FALLBACK_RESPONSES = {
+  en: [
+    'If soil moisture drops below 30%, water your plants immediately.',
+    'Yellow leaves often indicate nitrogen deficiency — consider organic fertilizer.',
+    'Water early morning to reduce evaporation and prevent fungal disease.',
+    'Temperature above 35°C? Move your plant to a cooler, shaded location.',
+  ],
+  hi: [
+    'मिट्टी की नमी 30% से कम हो तो तुरंत पानी दें।',
+    'पीली पत्तियां अक्सर नाइट्रोजन की कमी का संकेत होती हैं।',
+    'सुबह पानी देना सबसे अच्छा — वाष्पीकरण कम होता है।',
+    'तापमान 35°C से ऊपर हो तो पौधे को छाया में रखें।',
+  ],
+  mr: [
+    'मातीतील ओलावा 30% खाली गेल्यास लगेच पाणी द्या.',
+    'पिवळी पाने नायट्रोजनच्या कमतरतेचे लक्षण असते.',
+    'सकाळी पाणी देणे सर्वोत्तम — बाष्पीभवन कमी होते.',
+    'तापमान 35°C पेक्षा जास्त असल्यास पीक सावलीत ठेवा.',
+  ],
+  pa: [
+    'ਮਿੱਟੀ ਦੀ ਨਮੀ 30% ਤੋਂ ਘੱਟ ਹੋਵੇ ਤਾਂ ਤੁਰੰਤ ਪਾਣੀ ਦਿਓ।',
+    'ਪੀਲੇ ਪੱਤੇ ਨਾਈਟ੍ਰੋਜਨ ਦੀ ਕਮੀ ਦਾ ਸੰਕੇਤ ਹਨ।',
+    'ਸਵੇਰੇ ਪਾਣੀ ਦੇਣਾ ਸਭ ਤੋਂ ਵਧੀਆ — ਵਾਸ਼ਪੀਕਰਨ ਘੱਟ ਹੁੰਦਾ ਹੈ।',
+    'ਤਾਪਮਾਨ 35°C ਤੋਂ ਵੱਧ? ਫ਼ਸਲ ਨੂੰ ਛਾਂ ਵਿੱਚ ਰੱਖੋ।',
+  ],
+  ta: [
+    'மண் ஈரப்பதம் 30% கீழே சென்றால் உடனே தண்ணீர் பாய்ச்சுங்கள்.',
+    'மஞ்சள் இலைகள் நைட்ரஜன் குறைபாட்டின் அறிகுறி.',
+    'காலை நேரத்தில் தண்ணீர் பாய்ச்சுவது சிறந்தது.',
+    'வெப்பநிலை 35°C மேல் இருந்தால் பயிரை நிழலில் வையுங்கள்.',
+  ],
+  te: [
+    'నేల తేమ 30% కంటే తక్కువైతే వెంటనే నీళ్ళు పోయండి.',
+    'పసుపు ఆకులు నైట్రోజన్ లోపానికి సూచన.',
+    'ఉదయం నీళ్ళు పోయడం ఉత్తమం — ఆవిరి తక్కువగా అవుతుంది.',
+    'ఉష్ణోగ్రత 35°C కంటే ఎక్కువైతే పంటను నీడలో ఉంచండి.',
+  ],
+  kn: [
+    'ಮಣ್ಣಿನ ತೇವಾಂಶ 30% ಗಿಂತ ಕಡಿಮೆಯಾದಾಗ ತಕ್ಷಣ ನೀರು ಹಾಕಿ.',
+    'ಹಳದಿ ಎಲೆಗಳು ನೈಟ್ರೋಜನ್ ಕೊರತೆಯ ಸಂಕೇತ.',
+    'ಬೆಳಿಗ್ಗೆ ನೀರು ಹಾಕುವುದು ಉತ್ತಮ — ಆವಿಯಾಗುವಿಕೆ ಕಡಿಮೆ.',
+    'ಉಷ್ಣಾಂಶ 35°C ಮೀರಿದರೆ ಬೆಳೆಯನ್ನು ನೆರಳಿಗೆ ಸರಿಸಿ.',
+  ],
+  gu: [
+    'જો માટીનો ભેજ 30% થી ઓછો હોય, તો તરત પાણી આપો.',
+    'પીળા પાંદડા નાઇટ્રોજનની ઉણپ ني નિશાની છે.',
+    'સવારે પાણી આपવું ઉત્તમ — બાષ્પ ઓછું થાય.',
+    'ઉષ્ણતામાન 35°C ઉ૫ər হলে পাকने ছাயায় রাখুन।',
+  ],
+  bn: [
+    'মাটির আর্দ্রতা 30% এর নিচে গেলে সঙ্গে সঙ্গে জল দিন।',
+    'হলুদ পাতা নাইট্রোজেনের ঘাটতির লক্ষণ।',
+    'সকালে জল দেওয়া সবচেয়ে ভালো — বাষ্পীভবন কম হয়।',
+    'তাপমাত্রা 35°C এর উপরে? ফসলকে ছায়ায় রাখুন।',
+  ],
+  ml: [
+    'മണ്ണിലെ ഈർപ്പം 30% ൽ കുറഞ്ഞാൽ ഉടൻ വെള്ളം ഒഴിക്കുക.',
+    'മഞ്ഞ ഇലകൾ നൈട്രജൻ കുറവിന്റെ ലക്ഷണം.',
+    'രാവിലെ വെള്ളം ഒഴിക്കുന്നത് ഉത്തമം — ബാഷ്പീകരണം കുറവ്.',
+    'താപനില 35°C കൂടിയാൽ വിളയെ തണലിൽ വയ്ക്കുക.',
+  ],
+};
+
+app.post('/api/chat', requireAuth, async (req, res) => {
+  const { message, lang } = req.body;
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ error: 'message required' });
+  }
+
+  const AZURE_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT ||
+    'https://twilio-foundry.cognitiveservices.azure.com';
+  const AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
+  const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2025-01-01-preview';
+  const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY || '';
+
+  // Pick system prompt for detected language, fall back to English
+  const safeLang = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
+  const systemPrompt = CHAT_SYSTEM_PROMPTS[safeLang];
+
+  if (!AZURE_API_KEY) {
+    // Rule-based fallback when API key not set
+    const pool = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
+    const reply = pool[Math.floor(Math.random() * pool.length)];
+    return res.json({ reply });
+  }
+
+  try {
+    const chatUrl = `${AZURE_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_API_VERSION}`;
+    const response = await fetch(chatUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': AZURE_API_KEY,
+      },
+      body: JSON.stringify({
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: message.slice(0, 500) }, // cap length
+        ],
+        max_tokens: 300,
+        temperature: 0.7,
+      }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      console.error('[CHAT] Azure error:', errText);
+      return res.status(502).json({ error: 'AI service unavailable' });
+    }
+
+    const data = await response.json();
+    const reply = data.choices?.[0]?.message?.content?.trim() || 'Sorry, I could not generate a response.';
+    res.json({ reply });
+  } catch (err) {
+    console.error('[CHAT] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Keep-alive ping for Render hosting (uses http module — works on all Node versions)
 const http = require('http');
 setInterval(() => {

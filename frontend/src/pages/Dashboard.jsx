@@ -1,8 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import PlantCard from '../components/PlantCard';
 import * as api from '../api';
+import { useLang } from '../LangContext';
 
 export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
+  const { t } = useLang();
   const [plants, setPlants] = useState([]);
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -10,7 +12,7 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000); // Poll every 60s
+    const interval = setInterval(fetchData, 60000);
     return () => clearInterval(interval);
   }, []);
 
@@ -50,8 +52,8 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
         </div>
       )}
       <div className="page-header">
-        <h1 className="page-title">Dashboard</h1>
-        <p className="page-subtitle">Monitor your plant collection</p>
+        <h1 className="page-title">{t('dashboardTitle')}</h1>
+        <p className="page-subtitle">{t('dashboardSubtitle')}</p>
       </div>
 
       {error && <div className="error-message">{error}</div>}
@@ -60,19 +62,19 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
         <div className="dashboard-stats">
           <div className="stat-card">
             <div className="stat-value">{stats.totalPlants}</div>
-            <div className="stat-label">Total Plants</div>
+            <div className="stat-label">{t('totalPlants')}</div>
           </div>
           <div className="stat-card">
             <div className="stat-value" style={{ color: 'var(--success)' }}>{stats.healthyCount}</div>
-            <div className="stat-label">Healthy</div>
+            <div className="stat-label">{t('healthy')}</div>
           </div>
           <div className="stat-card">
             <div className="stat-value" style={{ color: 'var(--danger)' }}>{stats.alertCount}</div>
-            <div className="stat-label">Needs Attention</div>
+            <div className="stat-label">{t('needsAttention')}</div>
           </div>
           <div className="stat-card">
             <div className="stat-value" style={{ color: 'var(--primary-light)' }}>{stats.avgHealthScore}%</div>
-            <div className="stat-label">Avg Health</div>
+            <div className="stat-label">{t('avgHealth')}</div>
           </div>
         </div>
       )}
@@ -80,14 +82,11 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, isGuest }) {
       {plants.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-emoji">🌱</div>
-          <h2 className="empty-state-title">No plants yet</h2>
-          <p className="empty-state-subtitle">Add your first plant to get started with BhoomiIQ</p>
+          <h2 className="empty-state-title">{t('noPlantsTitle')}</h2>
+          <p className="empty-state-subtitle">{t('noPlantsText')}</p>
           {!isGuest && (
-            <button
-              className="empty-state-btn"
-              onClick={() => {}}
-            >
-              Add Plant
+            <button className="empty-state-btn" onClick={() => {}}>
+              {t('addFirstPlant')}
             </button>
           )}
         </div>

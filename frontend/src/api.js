@@ -312,3 +312,14 @@ export const triggerPump = async (duration_ms = 5000) => {
   if (!res.ok) throw new Error(data.error || 'Pump command failed');
   return data;
 };
+
+// ── AI Chat endpoint ──────────────────────────────────────────
+export const sendChatMessage = async (message, lang = 'en') => {
+  const res = await apiFetch('/api/chat', {
+    method: 'POST',
+    body: JSON.stringify({ message, lang })
+  }, 30000);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Chat failed');
+  return data; // { reply: string }
+};
