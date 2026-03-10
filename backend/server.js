@@ -9,6 +9,7 @@ require('dotenv').config();
 const db = require('./db');
 const { hashPassword, verifyPassword, createToken } = require('./auth');
 const { calculateHealthScore, analyzeImage, analyzeDeviceReport } = require('./ai_analysis');
+const { trackNewRegistration } = require('./adminTracking');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -220,6 +221,9 @@ app.post('/auth/register', registerLimit, async (req, res) => {
       email,
       password_hash
     });
+
+    // Notify admin + update spreadsheet (fire-and-forget — don't block response)
+    trackNewRegistration(user, 'email', true).catch(() => {});
 
     // Create token
     const token = createToken(user.id, SECRET_KEY);
@@ -468,6 +472,7 @@ app.post('/auth/google', async (req, res) => {
 
     // Find or create user
     let user = db.findUserByEmail(email.toLowerCase());
+    const isNewGoogleUser = !user;
     if (!user) {
       // New Google user — auto-register
       const { hashPassword } = require('./auth');
@@ -479,6 +484,8 @@ app.post('/auth/google', async (req, res) => {
         google_id:     googleId,
         auth_provider: 'google'
       });
+      // Notify admin + update spreadsheet (fire-and-forget)
+      trackNewRegistration(user, 'google', true).catch(() => {});
     }
 
     const token = createToken(user.id, SECRET_KEY);
@@ -559,6 +566,8 @@ app.post('/auth/phone/verify-otp', async (req, res) => {
         password_hash: await hashPassword(crypto.randomBytes(32).toString('hex')),
         auth_provider: 'phone'
       });
+      // Notify admin + update spreadsheet (fire-and-forget)
+      trackNewRegistration(user, 'phone', true).catch(() => {});
     }
 
     const token = createToken(user.id, SECRET_KEY);
