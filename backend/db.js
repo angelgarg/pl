@@ -87,13 +87,30 @@ function persistToMongo(collectionName, data) {
   (async () => {
     try {
       const col = mongoDB.collection(collectionName);
-      await col.deleteMany({});
-      if (data.length > 0) {
-        // Strip _id before inserting — MongoDB driver mutates input objects
-        // by adding _id, which causes duplicate key errors on subsequent writes
-        const docs = data.map(({ _id, ...doc }) => doc);
-        await col.insertMany(docs);
+
+      if (data.length === 0) {
+        // Nothing to keep — wipe the collection
+        await col.deleteMany({});
+        return;
       }
+
+      // Safe write: upsert each document by its custom `id` field first,
+      // THEN remove any stale documents no longer in the current set.
+      // If the process crashes mid-way, documents are never lost — only
+      // briefly stale rows may remain until the next successful write.
+      const docs = data.map(({ _id, ...doc }) => doc); // strip MongoDB's _id
+      const ops  = docs.map(doc => ({
+        replaceOne: {
+          filter:      { id: doc.id },
+          replacement: doc,
+          upsert:      true
+        }
+      }));
+      await col.bulkWrite(ops, { ordered: false });
+
+      // Remove documents whose `id` no longer exists in the in-memory store
+      const currentIds = docs.map(d => d.id);
+      await col.deleteMany({ id: { $nin: currentIds } });
     } catch (err) {
       console.error(`[DB] MongoDB write error (${collectionName}):`, err.message);
     }

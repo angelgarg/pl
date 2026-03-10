@@ -154,6 +154,30 @@ function optionalAuthCheck(req, res, next) {
   next();
 }
 
+// ─── Simple in-memory rate limiter (no external package needed) ──
+const _rlStore = new Map();
+function makeRateLimit(maxRequests, windowMs) {
+  return (req, res, next) => {
+    const key  = req.ip || 'unknown';
+    const now  = Date.now();
+    const hits = (_rlStore.get(key) || []).filter(t => t > now - windowMs);
+    if (hits.length >= maxRequests) {
+      return res.status(429).json({ error: 'Too many requests — please try again later.' });
+    }
+    hits.push(now);
+    _rlStore.set(key, hits);
+    // Prevent unbounded memory growth
+    if (_rlStore.size > 10000) {
+      const oldest = [..._rlStore.keys()][0];
+      _rlStore.delete(oldest);
+    }
+    next();
+  };
+}
+const loginLimit    = makeRateLimit(10,  15 * 60 * 1000); // 10 attempts / 15 min
+const registerLimit = makeRateLimit(5,   60 * 60 * 1000); // 5 registrations / hour
+const chatLimit     = makeRateLimit(30,  60 * 60 * 1000); // 30 AI chats / hour
+
 // Health check
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
@@ -163,7 +187,7 @@ app.get('/health', (req, res) => {
 // AUTH ROUTES
 // ============================================================
 
-app.post('/auth/register', async (req, res) => {
+app.post('/auth/register', registerLimit, async (req, res) => {
   try {
     const { username, email, password, confirmPassword } = req.body;
 
@@ -218,7 +242,7 @@ app.post('/auth/register', async (req, res) => {
   }
 });
 
-app.post('/auth/login', async (req, res) => {
+app.post('/auth/login', loginLimit, async (req, res) => {
   try {
     const { username, password } = req.body;
 
@@ -316,7 +340,7 @@ app.post('/auth/guest', async (req, res) => {
     }
 
     // Issue short-lived guest token (1 hour), signed with a guest-specific secret
-    const token = createToken(guest.id, SECRET_KEY + ':guest');
+    const token = createToken(guest.id, SECRET_KEY + ':guest', 60 * 60 * 1000);
 
     res.json({
       token,
@@ -1391,7 +1415,7 @@ const FALLBACK_RESPONSES = {
   ],
 };
 
-app.post('/api/chat', requireAuth, async (req, res) => {
+app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
   const { message, lang } = req.body;
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'message required' });

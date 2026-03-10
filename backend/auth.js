@@ -18,10 +18,12 @@ async function verifyPassword(password, stored) {
   return computed.toString('hex') === hash;
 }
 
-// Create token: base64(userId:timestamp).hmac
-function createToken(userId, secret) {
-  const timestamp = Date.now();
-  const payload = `${userId}:${timestamp}`;
+// Create token: base64(userId:issuedAt:expiresAt).hmac
+// Default expiry: 7 days for regular users, pass expiryMs to override
+function createToken(userId, secret, expiryMs = 7 * 24 * 60 * 60 * 1000) {
+  const issuedAt  = Date.now();
+  const expiresAt = issuedAt + expiryMs;
+  const payload   = `${userId}:${issuedAt}:${expiresAt}`;
   const payloadB64 = Buffer.from(payload).toString('base64');
   const hmac = crypto
     .createHmac('sha256', secret)
@@ -30,7 +32,7 @@ function createToken(userId, secret) {
   return `${payloadB64}.${hmac}`;
 }
 
-// Verify token
+// Verify token — returns userId if valid and not expired, else null
 function verifyToken(token, secret) {
   try {
     const [payloadB64, hmac] = token.split('.');
@@ -44,7 +46,13 @@ function verifyToken(token, secret) {
     if (expectedHmac !== hmac) return null;
 
     const payload = Buffer.from(payloadB64, 'base64').toString('utf8');
-    const [userId] = payload.split(':');
+    const parts   = payload.split(':');
+    const userId  = parts[0];
+    // Support both old format (userId:timestamp) and new format (userId:issuedAt:expiresAt)
+    if (parts.length >= 3) {
+      const expiresAt = parseInt(parts[2], 10);
+      if (!isNaN(expiresAt) && Date.now() > expiresAt) return null; // expired
+    }
     return userId;
   } catch (err) {
     return null;
