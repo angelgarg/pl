@@ -3031,3 +3031,203 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-secondary);
   opacity: 0.75;
 }
+
+/* ─── Auth Tabs (Email / Phone / Google) ───────────────────────────────── */
+.auth-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 20px;
+  background: var(--surface-alt, #f0f9ff);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.auth-tab {
+  flex: 1;
+  padding: 8px 6px;
+  border: none;
+  background: transparent;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.18s;
+  white-space: nowrap;
+}
+
+.auth-tab:hover {
+  background: rgba(56, 142, 60, 0.1);
+  color: var(--primary);
+}
+
+.auth-tab.active {
+  background: var(--primary);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(56, 142, 60, 0.3);
+}
+
+/* ─── Phone Input ───────────────────────────────────────────────────────── */
+.phone-input-wrap {
+  display: flex;
+  align-items: center;
+  border: 1.5px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--surface);
+  transition: border-color 0.18s;
+}
+
+.phone-input-wrap:focus-within {
+  border-color: var(--primary);
+}
+
+.phone-prefix {
+  padding: 10px 12px;
+  background: var(--surface-alt, #f0f9ff);
+  border-right: 1.5px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  user-select: none;
+}
+
+.phone-input-wrap input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: 15px;
+  outline: none;
+  color: var(--text-primary);
+}
+
+.form-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  opacity: 0.8;
+}
+
+/* ─── OTP Input ────────────────────────────────────────────────────────── */
+.otp-input {
+  letter-spacing: 0.35em;
+  font-size: 22px !important;
+  font-weight: 700;
+  text-align: center;
+}
+
+.otp-sent-note {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.btn-link:hover { opacity: 0.75; }
+
+/* ─── Google Tab ────────────────────────────────────────────────────────── */
+.google-tab-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 0 4px;
+}
+
+.google-tab-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  text-align: center;
+}
+
+/* ─── Forgot Password Row ───────────────────────────────────────────────── */
+.forgot-pwd-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -4px;
+  margin-bottom: 8px;
+}
+
+.forgot-pwd-link {
+  background: none;
+  border: none;
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+  opacity: 0.85;
+  transition: opacity 0.15s;
+}
+
+.forgot-pwd-link:hover { opacity: 1; }
+
+/* ─── Success Message ───────────────────────────────────────────────────── */
+.login-success {
+  background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+  border: 1.5px solid #81c784;
+  color: #2e7d32;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+.login-status {
+  background: rgba(56, 142, 60, 0.08);
+  border: 1.5px solid rgba(56, 142, 60, 0.25);
+  color: var(--primary);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 14px;
+  text-align: center;
+}
+
+/* ─── Social Sign-In States ─────────────────────────────────────────────── */
+.social-not-configured {
+  font-size: 12px;
+  color: var(--text-secondary);
+  background: var(--surface-alt, #f0f9ff);
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  text-align: center;
+  opacity: 0.8;
+}
+
+.social-loading {
+  font-size: 14px;
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 12px 0;
+}
+
+/* ─── Guest Login Note ──────────────────────────────────────────────────── */
+.guest-login-note {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-align: center;
+  margin-top: 6px;
+  opacity: 0.75;
+}

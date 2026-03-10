@@ -1,7 +1,44 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useCallback } from 'react';
 import * as api from '../api';
 import { useLang } from '../LangContext';
 import { LANG_OPTIONS } from '../i18n';
+
+const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || '';
+
+function GoogleSignInButton({ onLogin }) {
+  const btnRef = useRef(null);
+  const [error, setError]     = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const handleCredential = useCallback(async (response) => {
+    setError('');
+    setLoading(true);
+    try {
+      await api.wakeBackend();
+      const result = await api.googleLogin(response.credential);
+      onLogin(result.user);
+    } catch (err) {
+      setError(err.message || 'Google sign-in failed');
+    } finally {
+      setLoading(false);
+    }
+  }, [onLogin]);
+
+  useEffect(() => {
+    if (!GOOGLE_CLIENT_ID || !window.google || !btnRef.current) return;
+    window.google.accounts.id.initialize({ client_id: GOOGLE_CLIENT_ID, callback: handleCredential });
+    window.google.accounts.id.renderButton(btnRef.current, { theme: 'outline', size: 'large', width: 320, text: 'signup_with' });
+  }, [handleCredential]);
+
+  if (!GOOGLE_CLIENT_ID) return null;
+  return (
+    <div>
+      {error && <div className="login-error" style={{ marginBottom: 8 }}>{error}</div>}
+      {loading ? <div className="social-loading">⏳ Signing up with Google...</div>
+               : <div ref={btnRef} style={{ display: 'flex', justifyContent: 'center' }} />}
+    </div>
+  );
+}
 
 export default function RegisterPage({ onLogin, onSwitchToLogin }) {
   const { lang, setLang, t } = useLang();
@@ -142,6 +179,13 @@ export default function RegisterPage({ onLogin, onSwitchToLogin }) {
             {loading ? t('creatingAccount') : t('register')}
           </button>
         </form>
+
+        {GOOGLE_CLIENT_ID && (
+          <>
+            <div className="login-divider"><span>or sign up with</span></div>
+            <GoogleSignInButton onLogin={onLogin} />
+          </>
+        )}
 
         <p className="login-register-link">
           {t('alreadyHaveAccount')}{' '}

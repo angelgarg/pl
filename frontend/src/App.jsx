@@ -5,6 +5,8 @@ import Toast from './components/Toast';
 import ChatWidget from './components/ChatWidget';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
+import ForgotPasswordPage from './pages/ForgotPasswordPage';
+import ResetPasswordPage from './pages/ResetPasswordPage';
 import Dashboard from './pages/Dashboard';
 import PlantDetail from './pages/PlantDetail';
 import AddPlantPage from './pages/AddPlantPage';
@@ -26,6 +28,13 @@ function AppInner() {
   const [showAddNote, setShowAddNote] = useState(false);
 
   useEffect(() => {
+    // If URL has ?token=... navigate to reset-password page
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('token')) {
+      setCurrentPage('reset-password');
+      setLoading(false);
+      return;
+    }
     checkAuth();
   }, []);
 
@@ -107,15 +116,31 @@ function AppInner() {
   if (!user) {
     return (
       <>
-        {currentPage === 'register' ? (
+        {currentPage === 'register' && (
           <RegisterPage
             onLogin={handleRegister}
             onSwitchToLogin={() => setCurrentPage('login')}
           />
-        ) : (
+        )}
+        {currentPage === 'forgot-password' && (
+          <ForgotPasswordPage
+            onBack={() => setCurrentPage('login')}
+          />
+        )}
+        {currentPage === 'reset-password' && (
+          <ResetPasswordPage
+            onBack={() => setCurrentPage('login')}
+            onResetSuccess={() => {
+              setCurrentPage('login');
+              addToast({ type: 'success', message: 'Password reset! Please log in.' });
+            }}
+          />
+        )}
+        {(currentPage === 'login' || (currentPage !== 'register' && currentPage !== 'forgot-password' && currentPage !== 'reset-password')) && (
           <LoginPage
             onLogin={handleLogin}
             onSwitchToRegister={() => setCurrentPage('register')}
+            onForgotPassword={() => setCurrentPage('forgot-password')}
           />
         )}
         <div className="toasts-container">

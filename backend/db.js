@@ -18,13 +18,15 @@ const DATA_DIR = process.env.RENDER
 // All reads come from here (sync, fast).
 // All writes go here first, then async-persist to Mongo or file.
 const store = {
-  users:           [],
-  plants:          [],
-  readings:        [],
-  notes:           [],
-  fields:          [],
-  devices:         [],
-  device_readings: []
+  users:                 [],
+  plants:                [],
+  readings:              [],
+  notes:                 [],
+  fields:                [],
+  devices:               [],
+  device_readings:       [],
+  password_reset_tokens: [], // { id, user_id, token, expires_at, used }
+  phone_otps:            []  // { id, phone, otp, expires_at, used }
 };
 
 let mongoDB = null; // set by initDatabase()
@@ -471,12 +473,77 @@ function deleteDevice(id) {
   return true;
 }
 
+// ─── PASSWORD RESET TOKENS ────────────────────────────────────
+
+function createPasswordResetToken(userId) {
+  // Invalidate any old tokens for this user
+  store.password_reset_tokens = store.password_reset_tokens.filter(t => t.user_id !== userId);
+  const token = crypto.randomBytes(32).toString('hex');
+  const entry = {
+    id:         generateId(),
+    user_id:    userId,
+    token,
+    expires_at: new Date(Date.now() + 60 * 60 * 1000).toISOString(), // 1 hour
+    used:       false
+  };
+  store.password_reset_tokens.push(entry);
+  // No need to persist to MongoDB — these are short-lived
+  return token;
+}
+
+function findValidResetToken(token) {
+  return store.password_reset_tokens.find(
+    t => t.token === token && !t.used && new Date(t.expires_at) > new Date()
+  ) || null;
+}
+
+function consumeResetToken(token) {
+  const idx = store.password_reset_tokens.findIndex(t => t.token === token);
+  if (idx !== -1) store.password_reset_tokens[idx].used = true;
+}
+
+// ─── PHONE OTPs ───────────────────────────────────────────────
+
+function createPhoneOtp(phone) {
+  // Invalidate any old OTPs for this phone
+  store.phone_otps = store.phone_otps.filter(o => o.phone !== phone);
+  const otp = String(Math.floor(100000 + Math.random() * 900000)); // 6-digit
+  const entry = {
+    id:         generateId(),
+    phone,
+    otp,
+    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(), // 10 minutes
+    used:       false
+  };
+  store.phone_otps.push(entry);
+  return otp;
+}
+
+function findValidPhoneOtp(phone, otp) {
+  return store.phone_otps.find(
+    o => o.phone === phone && o.otp === otp && !o.used && new Date(o.expires_at) > new Date()
+  ) || null;
+}
+
+function consumePhoneOtp(phone) {
+  const idx = store.phone_otps.findIndex(o => o.phone === phone);
+  if (idx !== -1) store.phone_otps[idx].used = true;
+}
+
+function findUserByPhone(phone) {
+  return store.users.find(u => u.phone === phone) || null;
+}
+
 // ─── Exports ──────────────────────────────────────────────────
 
 module.exports = {
   initDatabase,
   // Users
-  getUsers, saveUsers, findUserById, findUserByEmail, findUserByUsername, createUser,
+  getUsers, saveUsers, findUserById, findUserByEmail, findUserByUsername, findUserByPhone, createUser,
+  // Password reset
+  createPasswordResetToken, findValidResetToken, consumeResetToken,
+  // Phone OTP
+  createPhoneOtp, findValidPhoneOtp, consumePhoneOtp,
   // Plants
   getPlants, savePlants, findPlantById, findPlantsByUserId, createPlant, updatePlant, deletePlant,
   // Readings

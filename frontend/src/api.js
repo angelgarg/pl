@@ -313,6 +313,52 @@ export const triggerPump = async (duration_ms = 5000) => {
   return data;
 };
 
+// ── Forgot / Reset password ───────────────────────────────────
+
+export const forgotPassword = async (email) => {
+  const res  = await apiFetch('/auth/forgot-password', { method: 'POST', body: JSON.stringify({ email }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Request failed');
+  return data;
+};
+
+export const resetPassword = async (token, newPassword, confirmPassword) => {
+  const res  = await apiFetch('/auth/reset-password', {
+    method: 'POST',
+    body: JSON.stringify({ token, newPassword, confirmPassword })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Reset failed');
+  return data;
+};
+
+// ── Google Sign-In ────────────────────────────────────────────
+
+export const googleLogin = async (credential) => {
+  const res  = await apiFetch('/auth/google', { method: 'POST', body: JSON.stringify({ credential }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Google sign-in failed');
+  if (data.token) setToken(data.token);
+  return data;
+};
+
+// ── Phone OTP ─────────────────────────────────────────────────
+
+export const sendPhoneOtp = async (phone) => {
+  const res  = await apiFetch('/auth/phone/send-otp', { method: 'POST', body: JSON.stringify({ phone }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
+  return data;
+};
+
+export const verifyPhoneOtp = async (phone, otp) => {
+  const res  = await apiFetch('/auth/phone/verify-otp', { method: 'POST', body: JSON.stringify({ phone, otp }) });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'OTP verification failed');
+  if (data.token) setToken(data.token);
+  return data;
+};
+
 // ── AI Chat endpoint ──────────────────────────────────────────
 export const sendChatMessage = async (message, lang = 'en') => {
   const res = await apiFetch('/api/chat', {

@@ -354,6 +354,223 @@ app.post('/auth/guest', async (req, res) => {
 });
 
 // ============================================================
+// FORGOT / RESET PASSWORD
+// ============================================================
+
+// Lazy-initialise nodemailer transporter only when needed
+let _emailTransporter = null;
+function getEmailTransporter() {
+  if (_emailTransporter) return _emailTransporter;
+  const EMAIL_USER = process.env.EMAIL_USER;
+  const EMAIL_PASS = process.env.EMAIL_APP_PASSWORD;
+  if (!EMAIL_USER || !EMAIL_PASS) return null;
+  const nodemailer = require('nodemailer');
+  _emailTransporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: { user: EMAIL_USER, pass: EMAIL_PASS }
+  });
+  return _emailTransporter;
+}
+
+const forgotLimit = makeRateLimit(3, 15 * 60 * 1000); // 3 requests / 15 min
+
+app.post('/auth/forgot-password', forgotLimit, async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return res.status(400).json({ error: 'Email required' });
+
+    // Always respond with success to prevent email enumeration
+    const user = db.findUserByEmail(email.toLowerCase().trim());
+    if (!user) return res.json({ message: 'If that email exists, a reset link has been sent.' });
+
+    const token = db.createPasswordResetToken(user.id);
+    const FRONTEND_URL = process.env.FRONTEND_URL || 'https://pl-kp57-git-main-gargangel2233s-projects.vercel.app';
+    const resetUrl  = `${FRONTEND_URL}/reset-password?token=${token}`;
+
+    const transporter = getEmailTransporter();
+    if (!transporter) {
+      console.warn('[AUTH] EMAIL_USER / EMAIL_APP_PASSWORD not set — cannot send reset email');
+      return res.json({ message: 'If that email exists, a reset link has been sent.' });
+    }
+
+    await transporter.sendMail({
+      from: `"BhoomiIQ" <${process.env.EMAIL_USER}>`,
+      to:   email,
+      subject: '🌿 BhoomiIQ — Reset your password',
+      html: `
+        <div style="font-family:Inter,Arial,sans-serif;max-width:480px;margin:0 auto;padding:32px;background:#f0fdf4;border-radius:16px;">
+          <h1 style="color:#16a34a;font-size:24px;margin-bottom:8px;">🌿 BhoomiIQ</h1>
+          <h2 style="color:#1e293b;font-size:18px;margin-bottom:16px;">Reset your password</h2>
+          <p style="color:#475569;margin-bottom:24px;">We received a request to reset the password for your BhoomiIQ account. Click the button below — the link expires in <strong>1 hour</strong>.</p>
+          <a href="${resetUrl}" style="display:inline-block;background:#16a34a;color:white;padding:14px 28px;border-radius:10px;text-decoration:none;font-weight:700;font-size:16px;">Reset Password</a>
+          <p style="color:#94a3b8;font-size:12px;margin-top:24px;">If you didn't request this, you can safely ignore this email. Your password will not change.</p>
+        </div>`
+    });
+
+    res.json({ message: 'If that email exists, a reset link has been sent.' });
+  } catch (err) {
+    console.error('[AUTH] Forgot password error:', err.message);
+    res.status(500).json({ error: 'Failed to send reset email' });
+  }
+});
+
+app.post('/auth/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword, confirmPassword } = req.body;
+    if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password required' });
+    if (newPassword !== confirmPassword)  return res.status(400).json({ error: 'Passwords do not match' });
+    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+
+    const entry = db.findValidResetToken(token);
+    if (!entry) return res.status(400).json({ error: 'Reset link is invalid or has expired' });
+
+    const { hashPassword } = require('./auth');
+    const password_hash = await hashPassword(newPassword);
+
+    // Update user's password
+    const users = db.getUsers();
+    const idx   = users.findIndex(u => u.id === entry.user_id);
+    if (idx === -1) return res.status(404).json({ error: 'User not found' });
+    users[idx].password_hash = password_hash;
+    users[idx].updated_at    = new Date().toISOString();
+    db.saveUsers(users);
+    db.consumeResetToken(token);
+
+    res.json({ message: 'Password reset successfully. You can now log in.' });
+  } catch (err) {
+    console.error('[AUTH] Reset password error:', err.message);
+    res.status(500).json({ error: 'Password reset failed' });
+  }
+});
+
+// ============================================================
+// GOOGLE SIGN-IN
+// ============================================================
+
+app.post('/auth/google', async (req, res) => {
+  try {
+    const { credential } = req.body;
+    if (!credential) return res.status(400).json({ error: 'Google credential required' });
+
+    const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+    if (!GOOGLE_CLIENT_ID) return res.status(503).json({ error: 'Google Sign-In not configured' });
+
+    // Verify with Google's tokeninfo endpoint (no extra package needed)
+    const verifyRes = await fetch(`https://oauth2.googleapis.com/tokeninfo?id_token=${credential}`);
+    const payload   = await verifyRes.json();
+
+    if (!verifyRes.ok || payload.aud !== GOOGLE_CLIENT_ID) {
+      return res.status(401).json({ error: 'Invalid Google token' });
+    }
+
+    const { email, name, sub: googleId } = payload;
+    if (!email) return res.status(400).json({ error: 'No email from Google' });
+
+    // Find or create user
+    let user = db.findUserByEmail(email.toLowerCase());
+    if (!user) {
+      // New Google user — auto-register
+      const { hashPassword } = require('./auth');
+      const randomPwd = crypto.randomBytes(32).toString('hex');
+      user = db.createUser({
+        username:      name?.replace(/\s+/g, '_').toLowerCase() || `user_${googleId.slice(-6)}`,
+        email:         email.toLowerCase(),
+        password_hash: await hashPassword(randomPwd),
+        google_id:     googleId,
+        auth_provider: 'google'
+      });
+    }
+
+    const token = createToken(user.id, SECRET_KEY);
+    res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
+    res.json({ token, user: { id: user.id, username: user.username, email: user.email } });
+  } catch (err) {
+    console.error('[AUTH] Google sign-in error:', err.message);
+    res.status(500).json({ error: 'Google sign-in failed' });
+  }
+});
+
+// ============================================================
+// PHONE OTP LOGIN  (Twilio)
+// ============================================================
+
+const otpLimit = makeRateLimit(3, 10 * 60 * 1000); // 3 OTP sends / 10 min per IP
+
+function getTwilioClient() {
+  const sid   = process.env.TWILIO_ACCOUNT_SID;
+  const token = process.env.TWILIO_AUTH_TOKEN;
+  if (!sid || !token) return null;
+  return require('twilio')(sid, token);
+}
+
+app.post('/auth/phone/send-otp', otpLimit, async (req, res) => {
+  try {
+    let { phone } = req.body;
+    if (!phone) return res.status(400).json({ error: 'Phone number required' });
+
+    // Normalise — add +91 for India if no country code given
+    phone = phone.replace(/\s+/g, '');
+    if (!phone.startsWith('+')) phone = '+91' + phone.replace(/^0/, '');
+
+    const otp    = db.createPhoneOtp(phone);
+    const client = getTwilioClient();
+
+    if (!client) {
+      // Dev fallback — log to console so you can test without Twilio
+      console.log(`[OTP] Phone=${phone}  OTP=${otp}  (Twilio not configured)`);
+      return res.json({ message: 'OTP sent (dev mode — check server logs)' });
+    }
+
+    await client.messages.create({
+      body: `Your BhoomiIQ verification code is: ${otp}. Valid for 10 minutes.`,
+      from: process.env.TWILIO_PHONE_NUMBER,
+      to:   phone
+    });
+
+    res.json({ message: 'OTP sent successfully' });
+  } catch (err) {
+    console.error('[AUTH] Send OTP error:', err.message);
+    res.status(500).json({ error: 'Failed to send OTP. Check your phone number.' });
+  }
+});
+
+app.post('/auth/phone/verify-otp', async (req, res) => {
+  try {
+    let { phone, otp } = req.body;
+    if (!phone || !otp) return res.status(400).json({ error: 'Phone and OTP required' });
+
+    phone = phone.replace(/\s+/g, '');
+    if (!phone.startsWith('+')) phone = '+91' + phone.replace(/^0/, '');
+
+    const entry = db.findValidPhoneOtp(phone, otp);
+    if (!entry) return res.status(400).json({ error: 'Invalid or expired OTP' });
+
+    db.consumePhoneOtp(phone);
+
+    // Find or create user by phone
+    let user = db.findUserByPhone(phone);
+    if (!user) {
+      const { hashPassword } = require('./auth');
+      const shortPhone = phone.slice(-4);
+      user = db.createUser({
+        username:      `farmer_${shortPhone}`,
+        email:         `${phone.replace('+', '')}@phone.bhoomiq`,
+        phone,
+        password_hash: await hashPassword(crypto.randomBytes(32).toString('hex')),
+        auth_provider: 'phone'
+      });
+    }
+
+    const token = createToken(user.id, SECRET_KEY);
+    res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
+    res.json({ token, user: { id: user.id, username: user.username, phone: user.phone } });
+  } catch (err) {
+    console.error('[AUTH] Verify OTP error:', err.message);
+    res.status(500).json({ error: 'OTP verification failed' });
+  }
+});
+
+// ============================================================
 // USER ROUTES
 // ============================================================
 
@@ -1425,7 +1642,7 @@ app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
     'https://twilio-foundry.cognitiveservices.azure.com';
   const AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
   const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2025-01-01-preview';
-  const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY || '';
+  const AZURE_API_KEY = process.env.AZURE_OPENAI_KEY || process.env.AZURE_OPENAI_API_KEY || '';
 
   // Pick system prompt for detected language, fall back to English
   const safeLang = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
