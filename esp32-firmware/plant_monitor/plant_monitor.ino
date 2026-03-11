@@ -1,7 +1,15 @@
 /*
  * ╔══════════════════════════════════════════════════════════╗
- * ║       PlantIQ — ESP32-S3 AI Plant Monitor v2.2          ║
+ * ║      BhoomiIQ — ESP32-S3 AI Field Monitor v2.3          ║
+ * ║      भूमि IQ — AI-powered soil & plant monitor          ║
  * ╚══════════════════════════════════════════════════════════╝
+ *
+ * SETUP INSTRUCTIONS (before flashing):
+ *   1. Set WIFI_SSID and WIFI_PASSWORD to your network
+ *   2. Set DEVICE_KEY to the key shown in BhoomiIQ dashboard
+ *      (Fields & Devices → your device → copy key)
+ *   3. BACKEND_URL: keep default for production
+ *      or change to http://localhost:3001 for local dev
  */
 
 #include <WiFi.h>
@@ -27,11 +35,11 @@ struct OfflineReading {
   bool used;
 };
 
-// ───────────────── USER CONFIG ─────────────────
-#define WIFI_SSID "CILP_Open"
-#define WIFI_PASSWORD "cilp@tiet#b122"
-#define BACKEND_URL "https://pl-kp57.onrender.com"
-#define DEVICE_KEY "plantiq-device-key-change-me"
+// ───────────────── USER CONFIG (EDIT THESE BEFORE FLASHING) ─────────────────
+#define WIFI_SSID       "Tiuu"       // ← your WiFi name
+#define WIFI_PASSWORD   "12345678"      // ← your WiFi password
+#define BACKEND_URL     "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
+#define DEVICE_KEY      "piq-0ACFCB-F2E26B"    // ← from BhoomiIQ dashboard
 
 #define REPORT_INTERVAL_S 30
 
@@ -182,15 +190,13 @@ bool connectWiFi(int maxRetries=3){
 
 WiFi.mode(WIFI_STA);
 
-// STATIC IP
-IPAddress local_IP(172,31,29,200);
-IPAddress gateway(172,31,29,1);
-IPAddress subnet(255,255,255,0);
-IPAddress dns(8,8,8,8);
-
-if(!WiFi.config(local_IP,gateway,subnet,dns)){
-Serial.println("[WiFi] Static IP Failed");
-}
+// DHCP (auto IP — recommended; comment out and use static block below if needed)
+// To use static IP, uncomment the block below:
+// IPAddress local_IP(192,168,1,200);
+// IPAddress gateway(192,168,1,1);
+// IPAddress subnet(255,255,255,0);
+// IPAddress dns(8,8,8,8);
+// if(!WiFi.config(local_IP,gateway,subnet,dns)) Serial.println("[WiFi] Static IP Failed");
 
 for(int a=1;a<=maxRetries;a++){
 

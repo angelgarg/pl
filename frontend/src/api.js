@@ -342,23 +342,6 @@ export const googleLogin = async (credential) => {
   return data;
 };
 
-// ── Phone OTP ─────────────────────────────────────────────────
-
-export const sendPhoneOtp = async (phone) => {
-  const res  = await apiFetch('/auth/phone/send-otp', { method: 'POST', body: JSON.stringify({ phone }) });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'Failed to send OTP');
-  return data;
-};
-
-export const verifyPhoneOtp = async (phone, otp) => {
-  const res  = await apiFetch('/auth/phone/verify-otp', { method: 'POST', body: JSON.stringify({ phone, otp }) });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || 'OTP verification failed');
-  if (data.token) setToken(data.token);
-  return data;
-};
-
 // ── AI Chat endpoint ──────────────────────────────────────────
 export const sendChatMessage = async (message, lang = 'en') => {
   const res = await apiFetch('/api/chat', {

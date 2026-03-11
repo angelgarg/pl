@@ -60,7 +60,7 @@ function GoogleSignInButton({ onLogin, disabled }) {
 export default function LoginPage({ onLogin, onSwitchToRegister, onForgotPassword }) {
   const { lang, setLang, t } = useLang();
 
-  // Active tab: 'email' | 'phone' | 'google'
+  // Active tab: 'email' | 'google'
   const [tab, setTab] = useState('email');
 
   // Email/password form
@@ -70,13 +70,6 @@ export default function LoginPage({ onLogin, onSwitchToRegister, onForgotPasswor
   const [guestLoading, setGuestLoading] = useState(false);
   const [error, setError]         = useState('');
   const [statusMsg, setStatusMsg] = useState('');
-
-  // Phone OTP form
-  const [phone, setPhone]         = useState('');
-  const [otp, setOtp]             = useState('');
-  const [otpSent, setOtpSent]     = useState(false);
-  const [otpLoading, setOtpLoading] = useState(false);
-  const [phoneError, setPhoneError] = useState('');
 
   // Language dropdown
   const [langOpen, setLangOpen]   = useState(false);
@@ -134,39 +127,7 @@ export default function LoginPage({ onLogin, onSwitchToRegister, onForgotPasswor
     }
   };
 
-  // ── Phone OTP ───────────────────────────────────────────────
-  const handleSendOtp = async (e) => {
-    e.preventDefault();
-    if (!phone.trim()) return setPhoneError('Enter your phone number');
-    setPhoneError('');
-    setOtpLoading(true);
-    try {
-      await api.wakeBackend();
-      await api.sendPhoneOtp(phone);
-      setOtpSent(true);
-    } catch (err) {
-      setPhoneError(err.message || 'Failed to send OTP');
-    } finally {
-      setOtpLoading(false);
-    }
-  };
-
-  const handleVerifyOtp = async (e) => {
-    e.preventDefault();
-    if (!otp.trim()) return setPhoneError('Enter the OTP');
-    setPhoneError('');
-    setOtpLoading(true);
-    try {
-      const result = await api.verifyPhoneOtp(phone, otp);
-      onLogin(result.user);
-    } catch (err) {
-      setPhoneError(err.message || 'OTP verification failed');
-    } finally {
-      setOtpLoading(false);
-    }
-  };
-
-  const busy = loading || guestLoading || otpLoading;
+  const busy = loading || guestLoading;
 
   return (
     <div className="login-container">
@@ -208,15 +169,11 @@ export default function LoginPage({ onLogin, onSwitchToRegister, onForgotPasswor
         <div className="auth-tabs">
           <button
             className={`auth-tab ${tab === 'email'  ? 'active' : ''}`}
-            onClick={() => { setTab('email');  setError(''); setPhoneError(''); }}
+            onClick={() => { setTab('email');  setError(''); }}
           >📧 Email</button>
           <button
-            className={`auth-tab ${tab === 'phone'  ? 'active' : ''}`}
-            onClick={() => { setTab('phone');  setError(''); setPhoneError(''); }}
-          >📱 Phone</button>
-          <button
             className={`auth-tab ${tab === 'google' ? 'active' : ''}`}
-            onClick={() => { setTab('google'); setError(''); setPhoneError(''); }}
+            onClick={() => { setTab('google'); setError(''); }}
           >🔵 Google</button>
         </div>
 
@@ -262,54 +219,6 @@ export default function LoginPage({ onLogin, onSwitchToRegister, onForgotPasswor
             <p className="guest-login-note">
               {t('guestLoginNote') || 'Explore with 3 sample plants — no account needed'}
             </p>
-          </>
-        )}
-
-        {/* ── Phone tab ── */}
-        {tab === 'phone' && (
-          <>
-            {phoneError && <div className="login-error">{phoneError}</div>}
-
-            {!otpSent ? (
-              <form onSubmit={handleSendOtp} className="login-form">
-                <div className="form-group">
-                  <label>Mobile Number</label>
-                  <div className="phone-input-wrap">
-                    <span className="phone-prefix">🇮🇳 +91</span>
-                    <input type="tel" placeholder="9876543210"
-                      value={phone} onChange={e => setPhone(e.target.value)}
-                      disabled={busy} maxLength={10} required />
-                  </div>
-                  <p className="form-hint">We'll send a 6-digit OTP via SMS</p>
-                </div>
-                <button type="submit" className="login-submit-btn" disabled={busy}>
-                  {otpLoading ? '⏳ Sending OTP...' : '📨 Send OTP'}
-                </button>
-              </form>
-            ) : (
-              <form onSubmit={handleVerifyOtp} className="login-form">
-                <p className="otp-sent-note">
-                  ✅ OTP sent to <strong>+91 {phone}</strong>
-                  <button type="button" className="btn-link" style={{ marginLeft: 8 }}
-                    onClick={() => { setOtpSent(false); setOtp(''); }}>
-                    Change
-                  </button>
-                </p>
-                <div className="form-group">
-                  <label>Enter OTP</label>
-                  <input type="text" placeholder="6-digit OTP" inputMode="numeric"
-                    maxLength={6} value={otp} onChange={e => setOtp(e.target.value.replace(/\D/g, ''))}
-                    disabled={busy} className="otp-input" required />
-                </div>
-                <button type="submit" className="login-submit-btn" disabled={busy}>
-                  {otpLoading ? '⏳ Verifying...' : '✅ Verify & Login'}
-                </button>
-                <button type="button" className="btn-link" style={{ textAlign: 'center', marginTop: 8 }}
-                  onClick={handleSendOtp} disabled={busy}>
-                  Resend OTP
-                </button>
-              </form>
-            )}
           </>
         )}
 
