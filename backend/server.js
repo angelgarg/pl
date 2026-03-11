@@ -370,8 +370,13 @@ function getEmailTransporter() {
   if (!EMAIL_USER || !EMAIL_PASS) return null;
   const nodemailer = require('nodemailer');
   _emailTransporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: { user: EMAIL_USER, pass: EMAIL_PASS }
+    host: 'smtp.gmail.com',
+    port: 587,
+    secure: false,
+    auth: { user: EMAIL_USER, pass: EMAIL_PASS },
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000
   });
   return _emailTransporter;
 }
