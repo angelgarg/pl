@@ -1,28 +1,25 @@
 /**
- * AI Analysis — Azure OpenAI GPT-4o Vision Agent
- * Endpoint: https://twilio-foundry.cognitiveservices.azure.com
- * Deployment: gpt-4o
- * API version: 2025-01-01-preview
+ * AI Analysis — Google Gemini 2.0 Flash (Vision + Text)
+ * Replaces Azure OpenAI GPT-4o
+ *
+ * Required env var:
+ *   GEMINI_API_KEY — get free at https://aistudio.google.com/app/apikey
  */
 
+'use strict';
+
 const fs = require('fs');
-const path = require('path');
 
-const AZURE_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT ||
-  'https://twilio-foundry.cognitiveservices.azure.com';
-const AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2025-01-01-preview';
-const AZURE_API_KEY = process.env.AZURE_OPENAI_API_KEY || '';
+const GEMINI_KEY   = () => process.env.GEMINI_API_KEY || '';
+const GEMINI_MODEL = 'gemini-2.0-flash';
+const GEMINI_URL   = () =>
+  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY()}`;
 
-// Full URL for chat completions
-const AZURE_CHAT_URL = `${AZURE_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_API_VERSION}`;
-
-// ─── RULE-BASED FALLBACK ─────────────────────────────────────
-
+// Rule-based fallback (when API key not set)
 function ruleBasedDecision(moisture_pct, temperature_c) {
   const pump_needed = moisture_pct < 30;
   const alert_level =
-    moisture_pct < 20 ? 'high' :
+    moisture_pct < 20 ? 'high'   :
     moisture_pct < 30 ? 'medium' :
     temperature_c > 35 || temperature_c < 10 ? 'medium' : 'none';
 
@@ -53,133 +50,116 @@ function ruleBasedDecision(moisture_pct, temperature_c) {
   };
 }
 
-// ─── AZURE GPT-4o AGENT ANALYSIS ────────────────────────────
+// Call Gemini API
+async function callGemini(parts, jsonMode = true) {
+  const body = {
+    contents: [{ parts }],
+    generationConfig: {
+      temperature: 0.15,
+      maxOutputTokens: 800,
+      ...(jsonMode ? { responseMimeType: 'application/json' } : {})
+    }
+  };
 
+  const res = await fetch(GEMINI_URL(), {
+    method:  'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body:    JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Gemini ${res.status}: ${errText}`);
+  }
+
+  const data = await res.json();
+  return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
+}
+
+// Main device report analysis (image + sensors)
 async function analyzeDeviceReport(imageBase64, sensorData) {
   const { moisture_pct = 0, temperature_c = 0 } = sensorData;
 
-  if (!AZURE_API_KEY) {
-    console.warn('[AI] AZURE_OPENAI_API_KEY not set — using rule-based fallback');
+  if (!GEMINI_KEY()) {
+    console.warn('[AI] GEMINI_API_KEY not set — using rule-based fallback');
     return ruleBasedDecision(moisture_pct, temperature_c);
   }
 
-  const now = new Date().toISOString();
   const moistureStatus =
     moisture_pct < 20 ? 'CRITICALLY DRY' :
-    moisture_pct < 30 ? 'DRY' :
-    moisture_pct < 50 ? 'ADEQUATE' :
-    moisture_pct < 70 ? 'MOIST' : 'WET / POSSIBLY OVERWATERED';
+    moisture_pct < 30 ? 'DRY'            :
+    moisture_pct < 50 ? 'ADEQUATE'       :
+    moisture_pct < 70 ? 'MOIST'          : 'WET / POSSIBLY OVERWATERED';
 
-  const prompt = `You are BhoomiIQ, an expert AI plant health agent. Analyze the plant image together with the sensor data below and return a complete health report and action plan.
+  const prompt = `You are BhoomiIQ, an expert AI plant health agent for Indian farms and gardens. Analyze the plant image together with the sensor data and return a complete health report.
 
-SENSOR DATA (recorded ${now}):
-- Soil Moisture: ${moisture_pct}% → Status: ${moistureStatus}
-- Ambient Temperature: ${temperature_c}°C
+SENSOR DATA:
+- Soil Moisture: ${moisture_pct}% (${moistureStatus})
+- Ambient Temperature: ${temperature_c}C
 
 WATERING THRESHOLDS:
-- < 20%: critically dry — water immediately, pump 10–15 s
-- 20–30%: dry — water now, pump 7–10 s
-- 30–50%: acceptable — water soon if trending down
-- 50–70%: ideal moisture
-- > 70%: wet — do NOT water (risk of root rot)
+- below 20%: critically dry, pump 10-15s
+- 20-30%: dry, pump 7-10s
+- 30-50%: acceptable
+- 50-70%: ideal
+- above 70%: wet, do NOT water
 
-TASK: Combine visual inspection of the image with the sensor readings to produce a holistic assessment.
-
-Respond ONLY with a valid JSON object (no markdown, no extra text):
+Return ONLY valid JSON (no markdown):
 {
-  "health_score": <integer 0-100>,
-  "visual_status": "<one paragraph describing what you see in the image>",
+  "health_score": <0-100>,
+  "visual_status": "<paragraph describing image>",
   "pump_needed": <true|false>,
-  "pump_reason": "<clear reasoning combining sensor + visual evidence>",
-  "pump_duration_seconds": <integer 5-30>,
+  "pump_reason": "<reasoning>",
+  "pump_duration_seconds": <5-30>,
   "alert_level": "<none|low|medium|high|critical>",
-  "alerts": ["<specific issue 1>", "<specific issue 2>"],
-  "immediate_actions": ["<urgent action 1>"],
-  "recommendations": ["<care tip 1>", "<care tip 2>", "<care tip 3>"],
-  "disease_detected": "<none | name of disease or pest>",
-  "disease_confidence": "<low|medium|high> (only if disease detected)",
+  "alerts": ["<issue>"],
+  "immediate_actions": ["<action>"],
+  "recommendations": ["<tip1>","<tip2>","<tip3>"],
+  "disease_detected": "<none|disease name>",
+  "disease_confidence": "<low|medium|high>",
   "growth_stage": "<seedling|young|vegetative|flowering|fruiting|dormant>",
   "leaf_color": "<description>",
   "leaf_condition": "<healthy|wilting|yellowing|browning|spotted|curling>",
-  "soil_surface_observation": "<what you can see of the soil surface>",
+  "soil_surface_observation": "<description>",
   "animal_detected": <true|false>,
-  "animal_type": "<none|cat|dog|bird|insect|pest|rodent|livestock|other — describe what you see>",
-  "animal_threat_level": "<none|low|medium|high — low=harmless visitor, medium=could damage plant, high=actively damaging>"
+  "animal_type": "<none|cat|dog|bird|insect|pest|rodent|livestock|other>",
+  "animal_threat_level": "<none|low|medium|high>"
 }`;
 
+  const parts = [{ text: prompt }];
+  if (imageBase64) {
+    parts.unshift({ inlineData: { mimeType: 'image/jpeg', data: imageBase64 } });
+  }
+
   try {
-    const body = {
-      messages: [
-        {
-          role: 'system',
-          content: 'You are BhoomiIQ, an expert AI plant health monitoring agent. You analyze plant images combined with sensor data to make precise, actionable recommendations. Always respond with valid JSON only.'
-        },
-        {
-          role: 'user',
-          content: [
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:image/jpeg;base64,${imageBase64}`,
-                detail: 'high'
-              }
-            },
-            { type: 'text', text: prompt }
-          ]
-        }
-      ],
-      temperature: 0.15,
-      max_tokens: 700,
-      response_format: { type: 'json_object' }
-    };
-
-    const res = await fetch(AZURE_CHAT_URL, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-key': AZURE_API_KEY
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      throw new Error(`Azure API ${res.status}: ${errText}`);
-    }
-
-    const data = await res.json();
-    const content = data.choices?.[0]?.message?.content;
-    if (!content) throw new Error('Empty response from Azure');
-
-    const parsed = JSON.parse(content);
-    console.log(`[AI] Analysis complete — health: ${parsed.health_score}, pump: ${parsed.pump_needed}, alert: ${parsed.alert_level}`);
+    const text   = await callGemini(parts, true);
+    const clean  = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    console.log(`[AI] Gemini — health: ${parsed.health_score}, pump: ${parsed.pump_needed}, alert: ${parsed.alert_level}`);
     return parsed;
-
   } catch (err) {
-    console.error('[AI] Azure GPT-4o failed:', err.message, '— using rule-based fallback');
+    console.error('[AI] Gemini failed:', err.message, '— rule-based fallback');
     return ruleBasedDecision(moisture_pct, temperature_c);
   }
 }
 
-// ─── LEGACY: analyzeImage (used by multi-plant pages) ────────
-
+// Legacy: analyzeImage (used by multi-plant pages)
 async function analyzeImage(imagePath, plantName = '', sensorData = {}) {
   try {
     if (!fs.existsSync(imagePath)) return null;
-    const imageBuffer = fs.readFileSync(imagePath);
-    const base64Image = imageBuffer.toString('base64');
+    const base64Image = fs.readFileSync(imagePath).toString('base64');
     const result = await analyzeDeviceReport(base64Image, {
-      moisture_pct: sensorData.moisture || 50,
+      moisture_pct:  sensorData.moisture    || 50,
       temperature_c: sensorData.temperature || 22
     });
     return {
-      visual_health: result.alert_level === 'none' ? 'healthy' : 'needs_attention',
-      diseases_detected: result.disease_detected !== 'none' ? [result.disease_detected] : [],
-      growth_stage: result.growth_stage,
+      visual_health:      result.alert_level === 'none' ? 'healthy' : 'needs_attention',
+      diseases_detected:  result.disease_detected !== 'none' ? [result.disease_detected] : [],
+      growth_stage:       result.growth_stage,
       immediate_concerns: result.immediate_actions,
-      recommendations: result.recommendations,
-      health_score: result.health_score,
-      summary: result.visual_status
+      recommendations:    result.recommendations,
+      health_score:       result.health_score,
+      summary:            result.visual_status
     };
   } catch (err) {
     console.error('[AI] analyzeImage error:', err.message);
@@ -187,17 +167,16 @@ async function analyzeImage(imagePath, plantName = '', sensorData = {}) {
   }
 }
 
-// ─── HEALTH SCORE (sensor-only, no vision) ───────────────────
-
+// Health score (sensor-only, no vision)
 function calculateHealthScore(sensorData, aiScore = null) {
   let score = 100;
   const { moisture = 50, temperature = 22, humidity = 55 } = sensorData;
-  if (moisture < 20) score -= 40;
-  else if (moisture < 40) score -= 20;
-  else if (moisture > 80) score -= 10;
-  if (temperature < 10 || temperature > 35) score -= 30;
+  if (moisture < 20)              score -= 40;
+  else if (moisture < 40)         score -= 20;
+  else if (moisture > 80)         score -= 10;
+  if (temperature < 10 || temperature > 35)   score -= 30;
   else if (temperature < 15 || temperature > 30) score -= 15;
-  if (humidity < 20) score -= 15;
+  if (humidity < 20)  score -= 15;
   else if (humidity < 30) score -= 8;
   if (aiScore !== null) score = Math.round(score * 0.4 + aiScore * 0.6);
   return Math.max(0, Math.min(100, score));

@@ -1401,7 +1401,6 @@ app.get('/api/devices/:id/latest', requireAuth, (req, res) => {
 // LEGACY ESP32/SUPABASE ENDPOINTS (full implementation)
 // ============================================================
 let supabase = null;
-let openaiAzure = null;
 
 try {
   const { createClient } = require('@supabase/supabase-js');
@@ -1409,18 +1408,6 @@ try {
     supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
   }
 } catch(e) { /* supabase not configured */ }
-
-try {
-  const { AzureOpenAI } = require('openai');
-  if (process.env.AZURE_OPENAI_KEY && process.env.AZURE_OPENAI_ENDPOINT) {
-    openaiAzure = new AzureOpenAI({
-      apiKey: process.env.AZURE_OPENAI_KEY,
-      endpoint: process.env.AZURE_OPENAI_ENDPOINT,
-      apiVersion: process.env.AZURE_OPENAI_API_VERSION || '2024-02-01',
-      deployment: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o',
-    });
-  }
-} catch(e) { /* azure openai not configured */ }
 
 function requireApiSecret(req, res, next) {
   const secret = req.headers['x-api-secret'];
@@ -1482,21 +1469,24 @@ app.post('/api/sensor-data', requireApiSecret, async (req, res) => {
     if (readErr) throw new Error(readErr.message);
 
     let aiResult = { pump: moisture_pct < 30, reason: 'Rule-based: moisture below 30%', raw: {} };
-    if (openaiAzure) {
+    const GEMINI_KEY_LEGACY = process.env.GEMINI_API_KEY || '';
+    if (GEMINI_KEY_LEGACY) {
       try {
-        const response = await openaiAzure.chat.completions.create({
-          model: process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o',
-          messages: [{
-            role: 'user',
-            content: [
-              { type: 'text', text: `Soil moisture: ${moisture_pct}%. Should I water? Reply JSON: {"pump":true/false,"reason":"..."}` },
-              { type: 'image_url', image_url: { url: snapshotUrl, detail: 'low' } }
-            ]
-          }],
-          temperature: 0.3, max_tokens: 150, response_format: { type: 'json_object' }
+        const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_KEY_LEGACY}`;
+        const gRes = await fetch(geminiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `Soil moisture: ${moisture_pct}%. Should I water? Reply JSON only: {"pump":true/false,"reason":"..."}` }] }],
+            generationConfig: { temperature: 0.3, maxOutputTokens: 150, responseMimeType: 'application/json' }
+          })
         });
-        const parsed = JSON.parse(response.choices[0].message.content);
-        aiResult = { pump: Boolean(parsed.pump), reason: parsed.reason || '', raw: parsed };
+        if (gRes.ok) {
+          const gData = await gRes.json();
+          const text  = gData.candidates?.[0]?.content?.parts?.[0]?.text || '';
+          const parsed = JSON.parse(text.replace(/```json|```/g, '').trim());
+          aiResult = { pump: Boolean(parsed.pump), reason: parsed.reason || '', raw: parsed };
+        }
       } catch(e) { /* use rule-based fallback */ }
     }
 
@@ -1647,49 +1637,46 @@ app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
     return res.status(400).json({ error: 'message required' });
   }
 
-  const AZURE_ENDPOINT = process.env.AZURE_OPENAI_ENDPOINT ||
-    'https://twilio-foundry.cognitiveservices.azure.com';
-  const AZURE_DEPLOYMENT = process.env.AZURE_OPENAI_DEPLOYMENT || 'gpt-4o';
-  const AZURE_API_VERSION = process.env.AZURE_OPENAI_API_VERSION || '2025-01-01-preview';
-  const AZURE_API_KEY = process.env.AZURE_OPENAI_KEY || process.env.AZURE_OPENAI_API_KEY || '';
+  const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+  const safeLang      = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
+  const systemPrompt  = CHAT_SYSTEM_PROMPTS[safeLang];
 
-  // Pick system prompt for detected language, fall back to English
-  const safeLang = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
-  const systemPrompt = CHAT_SYSTEM_PROMPTS[safeLang];
-
-  if (!AZURE_API_KEY) {
-    // Rule-based fallback when API key not set
-    const pool = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
+  // Fallback when no API key
+  if (!GEMINI_API_KEY) {
+    const pool  = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
     const reply = pool[Math.floor(Math.random() * pool.length)];
     return res.json({ reply });
   }
 
   try {
-    const chatUrl = `${AZURE_ENDPOINT}/openai/deployments/${AZURE_DEPLOYMENT}/chat/completions?api-version=${AZURE_API_VERSION}`;
-    const response = await fetch(chatUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'api-key': AZURE_API_KEY,
-      },
+    const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+    const response  = await fetch(geminiUrl, {
+      method:  'POST',
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: message.slice(0, 500) }, // cap length
-        ],
-        max_tokens: 300,
-        temperature: 0.7,
-      }),
+        contents: [{
+          parts: [{
+            text: `${systemPrompt}\n\nUser: ${message.slice(0, 500)}`
+          }]
+        }],
+        generationConfig: {
+          temperature:     0.7,
+          maxOutputTokens: 300
+        }
+      })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('[CHAT] Azure error:', errText);
-      return res.status(502).json({ error: 'AI service unavailable' });
+      console.error('[CHAT] Gemini error:', errText);
+      // Graceful fallback instead of 502
+      const pool  = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
+      return res.json({ reply: pool[Math.floor(Math.random() * pool.length)] });
     }
 
-    const data = await response.json();
-    const reply = data.choices?.[0]?.message?.content?.trim() || 'Sorry, I could not generate a response.';
+    const data  = await response.json();
+    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
+                  || 'Sorry, I could not generate a response.';
     res.json({ reply });
   } catch (err) {
     console.error('[CHAT] Error:', err.message);
