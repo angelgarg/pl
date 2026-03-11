@@ -24,24 +24,28 @@ function ruleBasedDecision(moisture_pct, temperature_c) {
     temperature_c > 35 || temperature_c < 10 ? 'medium' : 'none';
 
   const alerts = [];
-  if (moisture_pct < 20)  alerts.push('Critically dry soil — water immediately');
-  if (moisture_pct < 30)  alerts.push('Soil moisture low — watering needed');
-  if (moisture_pct > 80)  alerts.push('Soil may be overwatered');
-  if (temperature_c > 35) alerts.push('Temperature too high — move plant to cooler spot');
-  if (temperature_c < 10) alerts.push('Temperature too low — risk of cold damage');
+  if (moisture_pct < 20)  alerts.push('Your soil is very dry — please water your plant right away!');
+  if (moisture_pct < 30)  alerts.push('Soil is getting dry — your plant needs water soon');
+  if (moisture_pct > 80)  alerts.push('Soil has too much water — skip watering for now');
+  if (temperature_c > 35) alerts.push('It\'s too hot right now — move your plant to a cooler, shaded spot');
+  if (temperature_c < 10) alerts.push('Temperature is too cold — your plant may get damaged, keep it warm');
 
   return {
     health_score: Math.max(10, 100 - (moisture_pct < 30 ? (30 - moisture_pct) * 2 : 0)),
-    visual_status: 'No image — rule-based assessment only',
+    visual_status: 'No camera image available — analysis based on sensor readings only.',
     pump_needed,
     pump_reason: pump_needed
-      ? `Soil moisture at ${moisture_pct}% — below 30% threshold`
-      : `Soil moisture at ${moisture_pct}% — adequate`,
-    pump_duration_seconds: 7,
+      ? `Soil moisture is only ${moisture_pct}% — your plant is thirsty and needs water now`
+      : `Soil moisture is ${moisture_pct}% — your plant has enough water for now`,
+    pump_duration_seconds: moisture_pct < 20 ? 12 : 7,
     alert_level,
     alerts,
-    immediate_actions: pump_needed ? ['Activate water pump'] : [],
-    recommendations: ['Install camera for AI-powered visual analysis'],
+    immediate_actions: pump_needed ? ['Water your plant now'] : [],
+    recommendations: [
+      'Add a camera to get full AI-powered visual plant health reports',
+      'Check your plant leaves regularly for any yellowing or spots',
+      'Water in the early morning for best results'
+    ],
     disease_detected: 'none',
     growth_stage: 'vegetative',
     animal_detected: false,
@@ -91,36 +95,45 @@ async function analyzeDeviceReport(imageBase64, sensorData) {
     moisture_pct < 50 ? 'ADEQUATE'       :
     moisture_pct < 70 ? 'MOIST'          : 'WET / POSSIBLY OVERWATERED';
 
-  const prompt = `You are BhoomiIQ, an expert AI plant health agent for Indian farms and gardens. Analyze the plant image together with the sensor data and return a complete health report.
+  const prompt = `You are BhoomiIQ, a friendly plant care assistant for Indian farmers and home gardeners. Look at the plant image and sensor data below, then give a simple, caring report that any farmer or home gardener can easily understand — no technical jargon.
 
 SENSOR DATA:
 - Soil Moisture: ${moisture_pct}% (${moistureStatus})
-- Ambient Temperature: ${temperature_c}C
+- Temperature: ${temperature_c}°C
 
-WATERING THRESHOLDS:
-- below 20%: critically dry, pump 10-15s
-- 20-30%: dry, pump 7-10s
-- 30-50%: acceptable
-- 50-70%: ideal
-- above 70%: wet, do NOT water
+WATERING GUIDE:
+- Below 20%: Very dry — water right now (pump 10-15 seconds)
+- 20-30%: Getting dry — water soon (pump 7-10 seconds)
+- 30-50%: OK for now
+- 50-70%: Perfect moisture
+- Above 70%: Wet enough — do NOT water
+
+WRITING STYLE RULES (very important):
+- Write like a knowledgeable friend talking to a farmer, not a scientist
+- Use simple words. Example: say "leaves are turning yellow" not "chlorosis detected"
+- Be warm and encouraging. Example: "Your plant is doing well!" or "Don't worry, a little water will fix this"
+- Keep visual_status to 2-3 sentences max — describe what you actually see in plain words
+- Keep pump_reason short and simple — one sentence a child could understand
+- Alerts and recommendations should feel like friendly advice from a neighbour
+- If the plant looks healthy, say so positively
 
 Return ONLY valid JSON (no markdown):
 {
   "health_score": <0-100>,
-  "visual_status": "<paragraph describing image>",
+  "visual_status": "<2-3 simple sentences about what the plant looks like right now>",
   "pump_needed": <true|false>,
-  "pump_reason": "<reasoning>",
+  "pump_reason": "<one simple sentence why watering is or isn't needed>",
   "pump_duration_seconds": <5-30>,
   "alert_level": "<none|low|medium|high|critical>",
-  "alerts": ["<issue>"],
-  "immediate_actions": ["<action>"],
-  "recommendations": ["<tip1>","<tip2>","<tip3>"],
-  "disease_detected": "<none|disease name>",
+  "alerts": ["<simple friendly alert, e.g. 'Your soil is getting too dry — time to water!'>"],
+  "immediate_actions": ["<simple action, e.g. 'Give your plant some water now'>"],
+  "recommendations": ["<friendly tip 1>","<friendly tip 2>","<friendly tip 3>"],
+  "disease_detected": "<none|common disease name in plain English>",
   "disease_confidence": "<low|medium|high>",
   "growth_stage": "<seedling|young|vegetative|flowering|fruiting|dormant>",
-  "leaf_color": "<description>",
+  "leaf_color": "<simple color description, e.g. 'deep green and healthy'>",
   "leaf_condition": "<healthy|wilting|yellowing|browning|spotted|curling>",
-  "soil_surface_observation": "<description>",
+  "soil_surface_observation": "<simple description of soil, e.g. 'Soil looks dry on top'>",
   "animal_detected": <true|false>,
   "animal_type": "<none|cat|dog|bird|insect|pest|rodent|livestock|other>",
   "animal_threat_level": "<none|low|medium|high>"
