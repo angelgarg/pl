@@ -295,47 +295,103 @@ export default function LivePage({ isGuest, onAddToast }) {
 
           {/* ── AI Analysis card ── */}
           <div className="live-card ai-card">
-            <div className="live-card-header">
-              <span>🤖 AI Analysis — GPT-4o Vision</span>
+            {/* Header */}
+            <div className="ai-card-header">
+              <div className="ai-card-header-left">
+                <span className="ai-gemini-badge">✦ Gemini 2.0 Flash</span>
+                <span className="ai-card-title">Plant Health Report</span>
+              </div>
               <span className="live-timestamp">{fmtFull(live.created_at)}</span>
             </div>
-            {live.ai_visual_status && (
-              <p className="ai-visual-status">{live.ai_visual_status}</p>
+
+            {/* Health score + visual status row */}
+            <div className="ai-hero-row">
+              {live.ai_health_score != null && (
+                <div className="ai-score-ring" style={{
+                  '--score-color': live.ai_health_score >= 70 ? '#4ade80' : live.ai_health_score >= 40 ? '#fbbf24' : '#f87171',
+                  '--score-deg': `${(live.ai_health_score / 100) * 360}deg`
+                }}>
+                  <div className="ai-score-inner">
+                    <span className="ai-score-number">{live.ai_health_score}</span>
+                    <span className="ai-score-label">/ 100</span>
+                  </div>
+                </div>
+              )}
+              {live.ai_visual_status && (
+                <div className="ai-visual-status-box">
+                  <div className="ai-vs-icon">🌿</div>
+                  <p className="ai-visual-status-text">{live.ai_visual_status}</p>
+                </div>
+              )}
+            </div>
+
+            {/* Pump decision banner */}
+            {live.ai_pump_reason && (
+              <div className={`ai-pump-banner ${live.pump_activated ? 'pump-yes' : 'pump-no'}`}>
+                <span className="ai-pump-icon">{live.pump_activated ? '💧' : '✅'}</span>
+                <div>
+                  <div className="ai-pump-label">{live.pump_activated ? 'Watering Needed' : 'No Watering Needed'}</div>
+                  <div className="ai-pump-reason-text">{live.ai_pump_reason}</div>
+                </div>
+              </div>
             )}
-            <div className="ai-details-grid">
+
+            {/* Three columns */}
+            <div className="ai-insights-grid">
               {/* Alerts */}
               {live.ai_alerts?.length > 0 && (
-                <div className="ai-section">
-                  <h4 className="ai-section-title">⚠️ Alerts</h4>
+                <div className="ai-insight-col ai-col-alert">
+                  <div className="ai-col-header">
+                    <span className="ai-col-icon">🚨</span>
+                    <span className="ai-col-title">Alerts</span>
+                  </div>
                   {live.ai_alerts.map((a, i) => (
-                    <div key={i} className="ai-item alert-item">⚠ {a}</div>
+                    <div key={i} className="ai-insight-item ai-alert-pill">{a}</div>
                   ))}
                 </div>
               )}
+
               {/* Immediate actions */}
               {live.ai_immediate_actions?.length > 0 && (
-                <div className="ai-section">
-                  <h4 className="ai-section-title">🚀 Immediate Actions</h4>
+                <div className="ai-insight-col ai-col-action">
+                  <div className="ai-col-header">
+                    <span className="ai-col-icon">⚡</span>
+                    <span className="ai-col-title">Do Right Now</span>
+                  </div>
                   {live.ai_immediate_actions.map((a, i) => (
-                    <div key={i} className="ai-item action-item">→ {a}</div>
+                    <div key={i} className="ai-insight-item ai-action-pill">
+                      <span className="ai-step-num">{i + 1}</span>{a}
+                    </div>
                   ))}
                 </div>
               )}
+
               {/* Recommendations */}
               {live.ai_recommendations?.length > 0 && (
-                <div className="ai-section">
-                  <h4 className="ai-section-title">💡 Recommendations</h4>
+                <div className="ai-insight-col ai-col-rec">
+                  <div className="ai-col-header">
+                    <span className="ai-col-icon">💡</span>
+                    <span className="ai-col-title">Tips for You</span>
+                  </div>
                   {live.ai_recommendations.map((r, i) => (
-                    <div key={i} className="ai-item rec-item">• {r}</div>
+                    <div key={i} className="ai-insight-item ai-rec-pill">{r}</div>
                   ))}
                 </div>
               )}
             </div>
-            {live.ai_pump_reason && (
-              <div className="ai-pump-reason">
-                💦 Pump decision: <strong>{live.ai_pump_reason}</strong>
-              </div>
-            )}
+
+            {/* Extra info pills row */}
+            <div className="ai-meta-row">
+              {live.ai_disease && live.ai_disease !== 'none' && (
+                <span className="ai-meta-pill ai-pill-danger">🦠 {live.ai_disease}</span>
+              )}
+              {live.ai_growth_stage && live.ai_growth_stage !== 'vegetative' && (
+                <span className="ai-meta-pill ai-pill-info">🌱 Stage: {live.ai_growth_stage}</span>
+              )}
+              {live.ai_animal_detected && (
+                <span className="ai-meta-pill ai-pill-danger">🐾 Animal detected: {live.ai_animal_type}</span>
+              )}
+            </div>
           </div>
 
           {/* ── Pump control ── */}
