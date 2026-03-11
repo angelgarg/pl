@@ -39,7 +39,7 @@ struct OfflineReading {
 #define WIFI_SSID       "Tiuu"       // ← your WiFi name
 #define WIFI_PASSWORD   "12345678"      // ← your WiFi password
 #define BACKEND_URL     "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
-#define DEVICE_KEY      "piq-0ACFCB-F2E26B"    // ← from BhoomiIQ dashboard
+#define DEVICE_KEY      "piq-1D7ADC-E53119"    // ← from BhoomiIQ dashboard
 
 #define REPORT_INTERVAL_S 30
 
@@ -120,13 +120,16 @@ int readMoisturePct(){
 }
 
 // ───────────────── TEMPERATURE ─────────────────
+float lastGoodTemp = 25.0; // fallback if sensor fails
+
 float readTemperatureC(){
   tempSensor.requestTemperatures();
   float t=tempSensor.getTempCByIndex(0);
-  if(t==DEVICE_DISCONNECTED_C){
-    Serial.println("[TEMP] Sensor disconnected!");
-    return -999;
+  if(t==DEVICE_DISCONNECTED_C || t < -100 || t > 100){
+    Serial.println("[TEMP] Sensor disconnected — using last known value");
+    return lastGoodTemp; // use last valid reading instead of -999
   }
+  lastGoodTemp = t; // save good reading
   Serial.printf("[TEMP] %.2f C\n",t);
   return t;
 }
@@ -231,14 +234,40 @@ Serial.println("[WiFi] FAILED");
 return false;
 }
 
+// ───────────────── WAKE RENDER (cold-start ping) ─────────────────
+// Render free tier sleeps after inactivity — ping /health first
+// and wait up to 40 seconds for it to wake before sending image
+bool wakeBackend(){
+  for(int attempt=1; attempt<=3; attempt++){
+    WiFiClientSecure wc;
+    wc.setInsecure();
+    HTTPClient hh;
+    String pingUrl = String(BACKEND_URL) + "/health";
+    if(!hh.begin(wc, pingUrl)){ hh.end(); continue; }
+    hh.setTimeout(40000); // 40s — enough for Render cold start
+    int c = hh.GET();
+    hh.end();
+    if(c > 0){
+      Serial.printf("[WAKE] Backend ready (attempt %d, code %d)\n", attempt, c);
+      return true;
+    }
+    Serial.printf("[WAKE] Attempt %d failed (%d) — retrying in 5s\n", attempt, c);
+    for(int w=0;w<5;w++){ delay(1000); esp_task_wdt_reset(); }
+  }
+  Serial.println("[WAKE] Backend unreachable");
+  return false;
+}
+
 // ───────────────── HTTP REPORT ─────────────────
 ReportResult sendDeviceReport(int moisture,float tempC){
 
 ReportResult res={false,5000,false,-1,false};
 
+// Wake Render first — avoids SSL timeout on cold start
+if(!wakeBackend()) return res;
+
 WiFiClientSecure client;
 client.setInsecure();
-client.setTimeout(50);
 
 HTTPClient http;
 
