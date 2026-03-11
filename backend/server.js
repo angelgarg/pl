@@ -10,6 +10,7 @@ const db = require('./db');
 const { hashPassword, verifyPassword, createToken } = require('./auth');
 const { calculateHealthScore, analyzeImage, analyzeDeviceReport } = require('./ai_analysis');
 const { trackNewRegistration } = require('./adminTracking');
+const { generateDailyContent } = require('./socialContent');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1603,6 +1604,55 @@ app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
     res.json({ reply });
   } catch (err) {
     console.error('[CHAT] Error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================
+// SOCIAL MEDIA CONTENT API
+// ============================================================
+
+// Cache so Make.com can call multiple times without re-generating
+let _socialCache = { date: null, content: null };
+
+// GET /api/social/daily-content
+// Called by Make.com daily to get AI-generated post content
+// Protected by SOCIAL_API_KEY env var
+app.get('/api/social/daily-content', async (req, res) => {
+  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const expected = process.env.SOCIAL_API_KEY;
+  if (expected && apiKey !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  const today = new Date().toDateString();
+  // Return cached if already generated today
+  if (_socialCache.date === today && _socialCache.content) {
+    return res.json({ ...(_socialCache.content), cached: true });
+  }
+
+  try {
+    const content = await generateDailyContent();
+    _socialCache = { date: today, content };
+    res.json(content);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/social/refresh
+// Force regenerate today's content (optional manual trigger)
+app.post('/api/social/refresh', async (req, res) => {
+  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const expected = process.env.SOCIAL_API_KEY;
+  if (expected && apiKey !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  try {
+    const content = await generateDailyContent();
+    _socialCache = { date: new Date().toDateString(), content };
+    res.json({ ...content, refreshed: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
