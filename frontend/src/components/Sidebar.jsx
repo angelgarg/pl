@@ -10,13 +10,15 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
   const isGuest = user?.isGuest;
 
   const navItems = [
-    { id: 'live',      labelKey: 'navLive',      icon: '📡' },
-    { id: 'fields',    labelKey: 'navFields',    icon: '🌾' },
-    { id: 'dashboard', labelKey: 'navDashboard', icon: '📊' },
-    { id: 'my-plants', labelKey: 'navPlants',    icon: '🌿' },
-    { id: 'camera',    labelKey: 'navCamera',    icon: '📷' },
-    { id: 'analytics', labelKey: 'navAnalytics', icon: '📈' },
-    { id: 'settings',  labelKey: 'navSettings',  icon: '⚙️' }
+    { id: 'live',         labelKey: 'navLive',      icon: '📡' },
+    { id: 'fields',       labelKey: 'navFields',    icon: '🌾' },
+    { id: 'plant-zones',      label: 'Plant Zones',     icon: '🌱' },
+    { id: 'farm-dashboard',   label: 'Farm Dashboard',  icon: '🌾' },
+    { id: 'dashboard',    labelKey: 'navDashboard', icon: '📊' },
+    { id: 'my-plants',    labelKey: 'navPlants',    icon: '🌿' },
+    { id: 'camera',       labelKey: 'navCamera',    icon: '📷' },
+    { id: 'analytics',    labelKey: 'navAnalytics', icon: '📈' },
+    { id: 'settings',     labelKey: 'navSettings',  icon: '⚙️' }
   ];
 
   const handleNavClick = (page) => { setCurrentPage(page); setIsOpen(false); setLangMenuOpen(false); };
@@ -86,7 +88,7 @@ export default function Sidebar({ currentPage, setCurrentPage, user, onLogout })
                 onClick={() => handleNavClick(item.id)}
               >
                 <span className="sidebar-icon">{item.icon}</span>
-                <span className="sidebar-label">{t(item.labelKey)}</span>
+                <span className="sidebar-label">{item.label || t(item.labelKey)}</span>
                 {item.id === 'live' && <span className="sidebar-live-dot" />}
               </button>
             </li>

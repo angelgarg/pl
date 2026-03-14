@@ -195,4 +195,138 @@ function calculateHealthScore(sensorData, aiScore = null) {
   return Math.max(0, Math.min(100, score));
 }
 
-module.exports = { analyzeDeviceReport, analyzeImage, calculateHealthScore };
+// ─── Multi-Plant Zone Analysis ───────────────────────────────────────────────
+async function analyzeMultipleZones(imageBase64, sensorData = {}) {
+  const { moisture_pct = 0, temperature_c = 0 } = sensorData;
+
+  if (!GEMINI_KEY() || !imageBase64) {
+    const single = ruleBasedDecision(moisture_pct, temperature_c);
+    return {
+      zones: [{
+        zone_id: 1, position: 'center', label: 'Plant 1',
+        health_score: single.health_score,
+        status: single.alert_level === 'none' ? 'healthy' : 'needs_attention',
+        species: 'unknown', alerts: single.alerts,
+        immediate_actions: single.immediate_actions,
+        tips: single.recommendations, disease: 'none',
+        growth_stage: single.growth_stage,
+        leaf_condition: 'unknown', summary: single.visual_status
+      }],
+      total_zones: 1,
+      overall_health: single.health_score,
+      critical_zones: (single.alert_level === 'high' || single.alert_level === 'critical') ? [1] : []
+    };
+  }
+
+  const prompt = `You are BhoomiIQ, an expert plant health AI. Examine this wide-angle image showing multiple plants or plant plots.
+
+SENSOR DATA (applies to the whole area):
+- Soil Moisture: ${moisture_pct}%
+- Temperature: ${temperature_c}°C
+
+YOUR TASK:
+1. Count how many distinct plants or plant zones you can see (between 1 and 6)
+2. For EACH zone give an individual health report
+3. Number zones left-to-right, top-to-bottom as seen in the image
+4. Use SIMPLE friendly language like a knowledgeable farmer friend
+
+Return ONLY valid JSON (no markdown):
+{
+  "zones": [
+    {
+      "zone_id": <number>,
+      "position": "<left|center|right|top-left|top-right|bottom-left|bottom-right|center-left|center-right>",
+      "label": "<e.g. Plant 1, Front plot, Left corner>",
+      "health_score": <0-100>,
+      "status": "<healthy|good|needs_attention|stressed|critical>",
+      "species": "<plant type in plain words or unknown>",
+      "alerts": ["<0-2 short friendly alerts>"],
+      "immediate_actions": ["<0-2 actions needed RIGHT NOW>"],
+      "tips": ["<1-2 helpful tips>"],
+      "disease": "<none or plain English disease name>",
+      "growth_stage": "<seedling|young|vegetative|flowering|fruiting|dormant>",
+      "leaf_condition": "<healthy|wilting|yellowing|browning|spotted|curling|cannot see clearly>",
+      "summary": "<1-2 plain sentences about this specific plant>"
+    }
+  ],
+  "total_zones": <number 1-6>,
+  "overall_health": <average health score 0-100>,
+  "critical_zones": [<zone_ids needing urgent attention>]
+}`;
+
+  const parts = [
+    { inlineData: { mimeType: 'image/jpeg', data: imageBase64 } },
+    { text: prompt }
+  ];
+
+  try {
+    const text   = await callGemini(parts, true);
+    const clean  = text.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(clean);
+    console.log(`[AI] Zone analysis — ${parsed.total_zones} zones, overall: ${parsed.overall_health}`);
+    return parsed;
+  } catch (err) {
+    console.error('[AI] Zone analysis failed:', err.message);
+    return null;
+  }
+}
+
+// ─── Daily Plant Report ───────────────────────────────────────────────────────
+async function generateDailyPlantReport(zoneHistory) {
+  if (!GEMINI_KEY() || !zoneHistory?.length) return null;
+
+  const summarized = zoneHistory.slice(0, 12).map(r => ({
+    time: r.timestamp,
+    zones: r.zones?.map(z => ({
+      id: z.zone_id, label: z.label, health: z.health_score,
+      status: z.status, disease: z.disease, alerts: z.alerts
+    }))
+  }));
+
+  const prompt = `You are BhoomiIQ. Based on today's plant monitoring data, write a friendly daily health report.
+
+TODAY'S DATA:
+${JSON.stringify(summarized, null, 2)}
+
+Return ONLY valid JSON (no markdown):
+{
+  "overall_summary": "<2-3 warm friendly sentences about today>",
+  "trend": "<improving|stable|declining>",
+  "zones_today": [
+    {
+      "zone_id": <number>,
+      "label": "<name>",
+      "today_status": "<healthy|needs_attention|critical>",
+      "health_score": <0-100>,
+      "key_observation": "<1 sentence about this plant today>",
+      "action_needed": "<what to do or Nothing — looking great!>",
+      "disease_warning": "<none or warning>"
+    }
+  ],
+  "watering_schedule": [
+    {
+      "zone_id": <number>,
+      "label": "<name>",
+      "water_today": <true|false>,
+      "when": "<morning|evening|not today>",
+      "reason": "<short reason>"
+    }
+  ],
+  "alerts_digest": ["<only critical alerts if any>"],
+  "encouragement": "<one warm motivating sentence for the farmer>",
+  "healthy_count": <number>,
+  "attention_count": <number>,
+  "critical_count": <number>
+}`;
+
+  try {
+    const text   = await callGemini([{ text: prompt }], true);
+    const clean  = text.replace(/```json|```/g, '').trim();
+    return JSON.parse(clean);
+  } catch (err) {
+    console.error('[AI] Daily report failed:', err.message);
+    return null;
+  }
+}
+
+module.exports = { analyzeDeviceReport, analyzeImage, calculateHealthScore, analyzeMultipleZones, generateDailyPlantReport };

@@ -352,3 +352,42 @@ export const sendChatMessage = async (message, lang = 'en') => {
   if (!res.ok) throw new Error(data.error || 'Chat failed');
   return data; // { reply: string }
 };
+
+// ── Plant Zone Analysis API ───────────────────────────────────
+export const getLatestZones = async (deviceKey) => {
+  const res = await apiFetch(`/api/zones/latest?device_key=${encodeURIComponent(deviceKey)}`);
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch zones');
+  return data;
+};
+
+export const getDailyPlantReport = async (deviceKey) => {
+  const res = await apiFetch(`/api/zones/daily-report?device_key=${encodeURIComponent(deviceKey)}`);
+  if (res.status === 404) return null;
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to fetch daily report');
+  return data;
+};
+
+export const generatePlantReport = async (deviceKey) => {
+  const res = await apiFetch(`/api/zones/generate-report?device_key=${encodeURIComponent(deviceKey)}`, { method: 'POST' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to generate report');
+  return data;
+};
+
+// ── Farm / Slave Zone API ─────────────────────────────────────
+export const getFarmStatus = async (deviceKey) => {
+  const res = await apiFetch(`/api/farm/status?device_key=${encodeURIComponent(deviceKey)}`);
+  return res.json();
+};
+
+export const sendSlavePumpCommand = async (deviceKey, slaveId, pumpOn, pumpMs = 6000) => {
+  const res = await apiFetch('/api/farm/pump-command', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ device_key: deviceKey, slave_id: slaveId, pump_on: pumpOn, pump_ms: pumpMs }),
+  });
+  return res.json();
+};

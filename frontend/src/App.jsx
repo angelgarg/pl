@@ -15,6 +15,8 @@ import CameraPage from './pages/CameraPage';
 import SettingsPage from './pages/SettingsPage';
 import LivePage from './pages/LivePage';
 import FieldsPage from './pages/FieldsPage';
+import PlantZonesPage from './pages/PlantZonesPage';
+import FarmDashboard from './pages/FarmDashboard';
 import * as api from './api';
 
 // Inner app — has access to LangContext
@@ -209,6 +211,17 @@ function AppInner() {
 
         {currentPage === 'fields' && (
           <FieldsPage isGuest={user?.isGuest} onAddToast={addToast} />
+        )}
+
+        {currentPage === 'plant-zones' && (
+          <PlantZonesPage
+            deviceKey="piq-1D7ADC-E53119"
+            onAddToast={addToast}
+          />
+        )}
+
+        {currentPage === 'farm-dashboard' && (
+          <FarmDashboard />
         )}
       </main>
 

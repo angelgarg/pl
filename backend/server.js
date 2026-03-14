@@ -8,9 +8,12 @@ require('dotenv').config();
 
 const db = require('./db');
 const { hashPassword, verifyPassword, createToken } = require('./auth');
-const { calculateHealthScore, analyzeImage, analyzeDeviceReport } = require('./ai_analysis');
+const { calculateHealthScore, analyzeImage, analyzeDeviceReport, analyzeMultipleZones } = require('./ai_analysis');
 const { trackNewRegistration } = require('./adminTracking');
 const { generateDailyContent } = require('./socialContent');
+const { startAutoPoster, runDailyPost } = require('./autoPoster');
+const { saveZoneReading, getLatestZones, getDailyReport, runDailyReport, startDailyReportScheduler } = require('./dailyReport');
+const { updateFarmData, getFarmStatus, getAllFarmDevices, generatePumpCommands } = require('./slaveManager');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -1051,6 +1054,37 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     };
   }
 
+  // Run multi-zone analysis in parallel (non-blocking — doesn't delay pump response)
+  if (imageBase64) {
+    analyzeMultipleZones(imageBase64, { moisture_pct, temperature_c })
+      .then(zoneResult => {
+        if (zoneResult) {
+          const deviceKey = req.deviceRecord?.device_key || req.headers['x-device-key'] || 'unknown';
+          saveZoneReading(deviceKey, zoneResult);
+          console.log(`[ZONES] ${deviceKey} — ${zoneResult.total_zones} zones, health: ${zoneResult.overall_health}`);
+        }
+      })
+      .catch(err => console.error('[ZONES] Error:', err.message));
+  }
+
+  // Parse slave zone data piggybacked in x-slaves-json header
+  const slavesHeader = req.headers['x-slaves-json'];
+  if (slavesHeader) {
+    try {
+      const slavesArr = JSON.parse(slavesHeader);
+      const deviceKey = req.deviceRecord?.device_key || req.headers['x-device-key'] || 'unknown';
+      updateFarmData(deviceKey, {
+        moisture_pct,
+        temperature_c,
+        health_score: aiResult.health_score,
+        ai_summary: aiResult.visual_status,
+      }, slavesArr);
+      console.log(`[FARM] ${deviceKey} — ${slavesArr.length} slave zone(s) updated`);
+    } catch (e) {
+      console.warn('[FARM] Failed to parse x-slaves-json:', e.message);
+    }
+  }
+
   // Merge manual pump command if queued
   const manualCmd = pendingPumpCmd;
   pendingPumpCmd = null;
@@ -1103,6 +1137,44 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     animal_type:      aiResult.animal_type       || 'none',
     animal_threat:    aiResult.animal_threat_level || 'none'
   });
+});
+
+// ══════════════════════════════════════════════════════════════
+//  FARM / SLAVE ZONE ENDPOINTS
+// ══════════════════════════════════════════════════════════════
+
+// GET /api/farm/status?device_key=xxx
+// Returns master + all slave zone data for a device
+app.get('/api/farm/status', requireAuth, (req, res) => {
+  const deviceKey = req.query.device_key || req.user?.device_key;
+  if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  const status = getFarmStatus(deviceKey);
+  if (!status) return res.json({ zones: [], total_zones: 0, slave_count: 0, message: 'No data yet — waiting for device to report' });
+  res.json(status);
+});
+
+// GET /api/farm/all  (admin — all devices with slave data)
+app.get('/api/farm/all', requireAuth, (req, res) => {
+  const devices = getAllFarmDevices();
+  const result = devices.map(key => getFarmStatus(key)).filter(Boolean);
+  res.json(result);
+});
+
+// POST /api/farm/pump-command  — manual pump for a specific slave zone
+// Body: { device_key, slave_id, pump_on, pump_ms }
+app.post('/api/farm/pump-command', requireAuth, (req, res) => {
+  const { device_key, slave_id, pump_on, pump_ms } = req.body;
+  if (!device_key || !slave_id) return res.status(400).json({ error: 'device_key and slave_id required' });
+  // Store command — master will pick it up on next poll
+  if (!global._slavePumpCommands) global._slavePumpCommands = {};
+  if (!global._slavePumpCommands[device_key]) global._slavePumpCommands[device_key] = {};
+  global._slavePumpCommands[device_key][slave_id] = {
+    pump_on: !!pump_on,
+    pump_ms: pump_ms || 6000,
+    queued_at: Date.now(),
+  };
+  console.log(`[FARM] Queued pump command: ${device_key}/${slave_id} pump=${pump_on}`);
+  res.json({ success: true, message: `Pump command queued for ${slave_id}` });
 });
 
 // ── Live SSE stream ──────────────────────────────────────────
@@ -1609,6 +1681,48 @@ app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
 });
 
 // ============================================================
+// ============================================================
+// PLANT ZONE ANALYSIS API
+// ============================================================
+
+// GET /api/zones/latest?device_key=piq-xxx
+// Returns latest multi-zone analysis snapshot for a device
+app.get('/api/zones/latest', requireAuth, async (req, res) => {
+  const deviceKey = req.query.device_key;
+  if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  const latest = getLatestZones(deviceKey);
+  if (!latest) return res.status(404).json({ error: 'No zone data yet for this device' });
+  res.json(latest);
+});
+
+// GET /api/zones/daily-report?device_key=piq-xxx
+// Returns today's daily plant health report (generated at 7 AM)
+app.get('/api/zones/daily-report', requireAuth, async (req, res) => {
+  const deviceKey = req.query.device_key;
+  if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  const report = getDailyReport(deviceKey);
+  if (!report) {
+    return res.status(404).json({
+      error: 'No daily report yet',
+      hint: 'Report generates at 7 AM IST or use /api/zones/generate-report to trigger manually'
+    });
+  }
+  res.json(report);
+});
+
+// POST /api/zones/generate-report?device_key=piq-xxx
+// Manually trigger daily report generation (for testing)
+app.post('/api/zones/generate-report', requireAuth, async (req, res) => {
+  try {
+    await runDailyReport();
+    const deviceKey = req.query.device_key;
+    const report = deviceKey ? getDailyReport(deviceKey) : { message: 'Reports generated for all devices' };
+    res.json(report || { message: 'Generated — check /api/zones/daily-report' });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // SOCIAL MEDIA CONTENT API
 // ============================================================
 
@@ -1657,6 +1771,40 @@ app.post('/api/social/refresh', async (req, res) => {
   }
 });
 
+// POST /api/social/post-now
+// Manually trigger today's social media post (for testing or on-demand posting)
+// Protected by SOCIAL_API_KEY
+app.post('/api/social/post-now', async (req, res) => {
+  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const expected = process.env.SOCIAL_API_KEY;
+  if (expected && apiKey !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const force = req.query.force === 'true';
+  try {
+    const results = await runDailyPost(force);
+    res.json(results);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/social/status
+// Check today's posting status
+app.get('/api/social/status', async (req, res) => {
+  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const expected = process.env.SOCIAL_API_KEY;
+  if (expected && apiKey !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  res.json({
+    today          : new Date().toDateString(),
+    schedule       : process.env.POST_TIME || '0 9 * * *',
+    facebook_ready : !!(process.env.FB_PAGE_ID && process.env.FB_PAGE_ACCESS_TOKEN),
+    instagram_ready: !!(process.env.IG_USER_ID && process.env.FB_PAGE_ACCESS_TOKEN && process.env.IG_IMAGE_URL),
+  });
+});
+
 // Keep-alive ping for Render hosting (uses http module — works on all Node versions)
 const http = require('http');
 setInterval(() => {
@@ -1684,5 +1832,13 @@ app.use((err, req, res, next) => {
   await db.initDatabase();   // load data from MongoDB (or JSON files) into memory
   app.listen(PORT, () => {
     console.log(`BhoomiIQ backend running on http://localhost:${PORT}`);
+    // Start daily social media auto-poster (only when env vars are set)
+    if (process.env.FB_PAGE_ID || process.env.IG_USER_ID) {
+      startAutoPoster();
+    } else {
+      console.log('[AUTO-POST] Skipping scheduler — FB_PAGE_ID / IG_USER_ID not configured yet');
+    }
+    // Start daily plant report scheduler (always on)
+    startDailyReportScheduler();
   });
 })();
