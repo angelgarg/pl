@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import api from '../api';
+import { getFarmStatus, sendSlavePumpCommand } from '../api';
 
 // ─── health helpers ───────────────────────────────────────────
 const moistureColor = (pct) => {
@@ -42,12 +42,7 @@ function ZoneCard({ zone, deviceKey, onPumpCommand, isMaster }) {
     setPumpLoading(true);
     setPumpMsg('');
     try {
-      await api.post('/api/farm/pump-command', {
-        device_key: deviceKey,
-        slave_id:   zone.slave_id || 'MASTER',
-        pump_on:    true,
-        pump_ms:    durationMs,
-      });
+      await sendSlavePumpCommand(deviceKey, zone.slave_id || 'MASTER', true, durationMs);
       setPumpMsg(`✅ Pump queued for ${durationMs / 1000}s`);
       onPumpCommand?.();
     } catch (err) {
@@ -217,8 +212,8 @@ export default function FarmDashboard() {
 
   const load = useCallback(async () => {
     try {
-      const res = await api.get(`/api/farm/status?device_key=${DEVICE_KEY}`);
-      setFarmData(res.data);
+      const data = await getFarmStatus(DEVICE_KEY);
+      setFarmData(data);
       setLastRefresh(new Date());
       setError('');
     } catch (err) {
