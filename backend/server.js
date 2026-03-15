@@ -1088,7 +1088,9 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
   // Merge manual pump command if queued
   const manualCmd = pendingPumpCmd;
   pendingPumpCmd = null;
-  const pump_activated = aiResult.pump_needed || !!manualCmd;
+  // Safety gate: never pump if soil moisture is already sufficient (>= 60%)
+  // This prevents the AI from triggering the pump when soil is already wet
+  const pump_activated = (moisture_pct < 60) && (aiResult.pump_needed || !!manualCmd);
   const pump_duration_ms = manualCmd
     ? manualCmd.duration
     : (aiResult.pump_duration_seconds || 7) * 1000;
@@ -1231,8 +1233,11 @@ app.get('/api/device/stats', requireAuth, (req, res) => {
 
   res.json({
     count: history.length,
-    latest_health_score: latest.ai_health_score,
-    latest_alert_level:  latest.ai_alert_level,
+    latest_health_score:  latest.ai_health_score,
+    latest_alert_level:   latest.ai_alert_level,
+    latest_animal_detected: latest.ai_animal_detected || false,
+    latest_animal_type:     latest.ai_animal_type     || 'none',
+    latest_animal_threat:   latest.ai_animal_threat   || 'none',
     avg_moisture: moistures.length ? Math.round(moistures.reduce((a,b)=>a+b,0)/moistures.length) : null,
     avg_temp:     temps.length     ? parseFloat((temps.reduce((a,b)=>a+b,0)/temps.length).toFixed(1)) : null,
     pump_activations_last_100: pumpCount,
