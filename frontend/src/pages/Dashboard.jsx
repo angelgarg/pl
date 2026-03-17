@@ -7,24 +7,32 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, is
   const { t } = useLang();
   const [plants, setPlants] = useState([]);
   const [stats, setStats] = useState(null);
+  const [deviceData, setDeviceData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [animalDismissed, setAnimalDismissed] = useState(false);
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 60000);
+    const interval = setInterval(fetchData, 30000);
     return () => clearInterval(interval);
   }, []);
 
   const fetchData = async () => {
     try {
       setError('');
-      const [plantsData, statsData] = await Promise.all([
+      const [plantsData, statsData, deviceLatest] = await Promise.all([
         api.getPlants(),
-        api.getDashboard()
+        api.getDashboard(),
+        api.getDeviceLatest().catch(() => null)   // non-fatal if device never reported
       ]);
       setPlants(plantsData);
       setStats(statsData);
+      if (deviceLatest) {
+        setDeviceData(deviceLatest);
+        // Reset dismiss when a new animal is detected
+        if (deviceLatest.ai_animal_detected) setAnimalDismissed(false);
+      }
     } catch (err) {
       setError(err.message || 'Failed to load data');
     } finally {
@@ -64,6 +72,60 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, is
       </div>
 
       {error && <div className="error-message">{error}</div>}
+
+      {/* ── Animal Detection Alert Banner ── */}
+      {deviceData?.ai_animal_detected && !animalDismissed && (
+        <div style={{
+          background: 'linear-gradient(135deg, #2a0808, #1a0505)',
+          border: '1.5px solid #EF4444',
+          borderRadius: '10px',
+          padding: '14px 18px',
+          marginBottom: '18px',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: '12px',
+          boxShadow: '0 0 18px rgba(239,68,68,0.25)'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <span style={{ fontSize: '26px' }}>⚠️</span>
+            <div>
+              <div style={{ color: '#EF4444', fontWeight: 700, fontSize: '15px', marginBottom: '2px' }}>
+                Animal Detected — Buzzer Triggered
+              </div>
+              <div style={{ color: '#ffaaaa', fontSize: '13px' }}>
+                <strong style={{ textTransform: 'capitalize' }}>
+                  {deviceData.ai_animal_type !== 'none' ? deviceData.ai_animal_type : 'Unknown animal'}
+                </strong>
+                {' '}spotted near your plants
+                {deviceData.ai_animal_threat && deviceData.ai_animal_threat !== 'none' && (
+                  <span style={{
+                    marginLeft: '8px',
+                    background: deviceData.ai_animal_threat === 'high' ? '#7a1010' : '#5a2a10',
+                    color: deviceData.ai_animal_threat === 'high' ? '#ff8888' : '#ffbb88',
+                    borderRadius: '4px', padding: '1px 7px', fontSize: '11px', fontWeight: 600
+                  }}>
+                    {deviceData.ai_animal_threat.toUpperCase()} THREAT
+                  </span>
+                )}
+                <span style={{ color: '#7a4a4a', marginLeft: '10px', fontSize: '11px' }}>
+                  {deviceData.created_at ? new Date(deviceData.created_at).toLocaleTimeString() : ''}
+                </span>
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={() => setAnimalDismissed(true)}
+            style={{
+              background: 'none', border: '1px solid #7a3a3a', borderRadius: '6px',
+              color: '#EF4444', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
+              whiteSpace: 'nowrap'
+            }}
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
 
       {stats && (
         <div className="dashboard-stats">

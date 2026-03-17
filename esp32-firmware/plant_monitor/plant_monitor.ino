@@ -22,6 +22,7 @@
  */
 
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <OneWire.h>
@@ -38,6 +39,9 @@ struct ReportResult {
   bool buzzer;
   int health_score;
   bool ok;
+  bool animal_detected;
+  char animal_type[32];   // "cat", "dog", "bird", "rodent", etc.
+  char animal_threat[16]; // "none", "low", "medium", "high"
 };
 
 struct OfflineReading {
@@ -84,21 +88,33 @@ int slaveCount = 0;
 portMUX_TYPE slaveMux = portMUX_INITIALIZER_UNLOCKED;
 
 // ───────────────── USER CONFIG (EDIT THESE BEFORE FLASHING) ─────────────────
-#define WIFI_SSID       "CILP_Open"       // ← your WiFi name
-#define WIFI_PASSWORD   "cilp@tiet#b122"  // ← your WiFi password
-#define BACKEND_URL     "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
-#define DEVICE_KEY      "piq-1D7ADC-E53119"    // ← from BhoomiIQ dashboard
+// Add / remove networks below — device auto-picks strongest available
+WiFiMulti wifiMulti;
+void setupWiFiNetworks() {
+  wifiMulti.addAP("CILP_Open",  "cilp@tiet#b122");   // college
+  wifiMulti.addAP("Tiuu",       "12345678");          // home
+  // wifiMulti.addAP("FarmHotspot", "password");      // ← add more here
+}
+
+#define BACKEND_URL  "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
+#define DEVICE_KEY   "piq-1D7ADC-E53119"             // ← from BhoomiIQ dashboard
 
 #define REPORT_INTERVAL_S 30
 
 #define MOISTURE_CRITICAL 20
 #define MOISTURE_DRY 30
 #define PUMP_EMERGENCY_MS 8000
+#define PUMP_EMERGENCY_COOLDOWN_MS 120000  // 2 min cooldown — stops repeated emergency pumping
+
+// ── RELAY TYPE — change if pump behaviour is inverted ──
+// true  = active LOW relay  (LOW=ON, HIGH=OFF) — most common blue relay modules
+// false = active HIGH relay (HIGH=ON, LOW=OFF) — some red/black modules
+#define RELAY_ACTIVE_LOW true
 
 // ───────────────── PINS ─────────────────
 #define SOIL_PIN 1
 #define DS18B20_PIN 14
-#define RELAY_PIN 47   // pump relay soldered to GPIO 47
+#define RELAY_PIN 38   // pump relay — GPIO 38
 #define BUZZER_PIN 21  // buzzer soldered to GPIO 21
 
 // Camera pins
@@ -126,6 +142,7 @@ portMUX_TYPE slaveMux = portMUX_INITIALIZER_UNLOCKED;
 OneWire oneWire(DS18B20_PIN);
 DallasTemperature tempSensor(&oneWire);
 bool cameraOK = false;
+unsigned long lastEmergencyPumpMs = 0;  // cooldown tracker for local emergency pump
 
 #define OFFLINE_QUEUE_SIZE 5
 OfflineReading offlineQueue[OFFLINE_QUEUE_SIZE];
@@ -140,40 +157,46 @@ void beep(int ms, int n = 1) {
   }
 }
 
-void beepBoot(){beep(80,3);}
-void beepFail(){beep(500,2);}
-void beepAlert(){beep(250,4);}
-void beepPump(){beep(60,2);delay(60);beep(180,1);}
+void beepBoot()  { beep(80,3); }
+void beepFail()  { beep(500,2); }
+void beepPump()  { beep(60,2); delay(60); beep(180,1); }
+// Animal detected — aggressive pattern: 3× (short-short-long) to scare animal away
+void beepAnimal(int cycles=3) {
+  for(int c=0; c<cycles; c++){
+    beep(80,2); delay(60); beep(400,1);
+    if(c < cycles-1) delay(200);
+  }
+}
 
 // ───────────────── PUMP ─────────────────
+#define RELAY_ON  (RELAY_ACTIVE_LOW ? LOW  : HIGH)
+#define RELAY_OFF (RELAY_ACTIVE_LOW ? HIGH : LOW)
+
 // Soft-start: gradually ramp up pump in 3 pulses before full ON
 // This reduces inrush current spike that can trip battery shield overcurrent protection
 void pumpSoftStart(){
-  // Pulse relay ON briefly to let motor spin up, then full ON
-  // Each pulse charges the motor windings gradually
-  digitalWrite(RELAY_PIN, LOW);  delay(80);   // pulse 1 — short burst
-  digitalWrite(RELAY_PIN, HIGH); delay(60);   // brief OFF — capacitor recharges
+  digitalWrite(RELAY_PIN, RELAY_ON);  delay(80);   // pulse 1 — short burst
+  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
   esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, LOW);  delay(150);  // pulse 2 — longer burst
-  digitalWrite(RELAY_PIN, HIGH); delay(60);   // brief OFF
+  digitalWrite(RELAY_PIN, RELAY_ON);  delay(150);  // pulse 2 — longer burst
+  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
   esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, LOW);  delay(300);  // pulse 3 — motor nearly at speed
-  digitalWrite(RELAY_PIN, HIGH); delay(60);   // brief OFF
+  digitalWrite(RELAY_PIN, RELAY_ON);  delay(300);  // pulse 3 — motor nearly at speed
+  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
   esp_task_wdt_reset();
-  // Now motor is spinning — full ON is safe, inrush is minimal
-  digitalWrite(RELAY_PIN, LOW);
-  Serial.println("[PUMP] Soft-start complete — full ON");
+  digitalWrite(RELAY_PIN, RELAY_ON);  // full ON — motor already spinning
+  Serial.printf("[PUMP] Soft-start complete — full ON (active-%s)\n",
+    RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
 }
 
 void pumpRun(unsigned long ms){
   Serial.printf("[PUMP] ON %lu ms (with soft-start)\n", ms);
   beepPump();
-  pumpSoftStart();                // ramp up first — avoids battery shield trip
+  pumpSoftStart();
   esp_task_wdt_reset();
-  // Run for remaining time (subtract soft-start duration ~810ms)
   unsigned long runMs = (ms > 810) ? ms - 810 : 0;
   if(runMs > 0) delay(runMs);
-  digitalWrite(RELAY_PIN, HIGH); // OFF
+  digitalWrite(RELAY_PIN, RELAY_OFF);
   Serial.println("[PUMP] OFF");
 }
 
@@ -390,44 +413,54 @@ bool initESPNOW() {
 bool connectWiFi(int maxRetries=3){
 
 WiFi.mode(WIFI_STA);
+setupWiFiNetworks();
 
-// Static IP — assigned for this device on CILP_Open network
-IPAddress local_IP(172, 31, 29, 200);
-IPAddress gateway(172, 31, 29, 1);   // standard gateway for 172.31.29.x subnet
-IPAddress subnet(255, 255, 255, 0);
-IPAddress dns(8, 8, 8, 8);           // Google DNS
-if(!WiFi.config(local_IP, gateway, subnet, dns)) Serial.println("[WiFi] Static IP config failed — falling back to DHCP");
+Serial.println("[WiFi] Scanning for known networks...");
 
-for(int a=1;a<=maxRetries;a++){
+for(int a=1; a<=maxRetries; a++){
 
-Serial.printf("[WiFi] Attempt %d — %s\n",a,WIFI_SSID);
+  Serial.printf("[WiFi] Attempt %d\n", a);
 
-WiFi.begin(WIFI_SSID,WIFI_PASSWORD);
+  int t = 0;
+  while(wifiMulti.run() != WL_CONNECTED && t++ < 20){
+    delay(500);
+    Serial.print(".");
+    esp_task_wdt_reset();
+  }
 
-int t=0;
+  Serial.println();
 
-while(WiFi.status()!=WL_CONNECTED && t++<20){
-delay(500);
-Serial.print(".");
-esp_task_wdt_reset();
+  if(WiFi.status() == WL_CONNECTED){
+
+    Serial.printf("[WiFi] Connected to: %s\n", WiFi.SSID().c_str());
+    Serial.printf("[WiFi] IP:%s  RSSI:%d\n",
+      WiFi.localIP().toString().c_str(),
+      WiFi.RSSI());
+
+    // Apply static IP only on college network (needs fixed IP for Render reach)
+    if(WiFi.SSID() == "CILP_Open"){
+      WiFi.disconnect(false);
+      IPAddress local_IP(172, 31, 29, 200);
+      IPAddress gateway(172, 31, 29, 1);
+      IPAddress subnet(255, 255, 255, 0);
+      IPAddress dns(8, 8, 8, 8);
+      if(WiFi.config(local_IP, gateway, subnet, dns)){
+        WiFi.begin("CILP_Open", "cilp@tiet#b122");
+        int st=0;
+        while(WiFi.status()!=WL_CONNECTED && st++<20){ delay(500); }
+        Serial.printf("[WiFi] Static IP applied: %s\n",
+          WiFi.localIP().toString().c_str());
+      }
+    }
+
+    return true;
+  }
+
+  WiFi.disconnect(true);
+  delay(1000 * a);
 }
 
-Serial.println();
-
-if(WiFi.status()==WL_CONNECTED){
-
-Serial.printf("[WiFi] Connected IP:%s RSSI:%d\n",
-WiFi.localIP().toString().c_str(),
-WiFi.RSSI());
-
-return true;
-}
-
-WiFi.disconnect(true);
-delay(1000*a);
-}
-
-Serial.println("[WiFi] FAILED");
+Serial.println("[WiFi] FAILED — no known network in range");
 return false;
 }
 
@@ -449,8 +482,9 @@ bool wakeBackend(){
     hh.end();
     if(c > 0){
       Serial.printf("[WAKE] Backend ready (attempt %d, HTTP %d)\n", attempt, c);
-      delay(1500); // small grace period — let server fully settle before main request
-      esp_task_wdt_reset();
+      // Wait 5s after wake — Render needs time to fully init SSL/TCP stack
+      // before it can handle a heavy POST with image data
+      for(int g=0;g<5;g++){ delay(1000); esp_task_wdt_reset(); }
       return true;
     }
     Serial.printf("[WAKE] Attempt %d failed (err %d) — waiting 8s\n", attempt, c);
@@ -463,7 +497,7 @@ bool wakeBackend(){
 // ───────────────── HTTP REPORT ─────────────────
 ReportResult sendDeviceReport(int moisture,float tempC){
 
-ReportResult res={false,5000,false,-1,false};
+ReportResult res={false,5000,false,-1,false,false,"none","none"};
 
 // Wake Render first — avoids SSL timeout on cold start
 if(!wakeBackend()) return res;
@@ -515,17 +549,42 @@ for(int attempt=1; attempt<=3; attempt++){
 
   if(code == 200){
     String body = http.getString();
-    res.ok   = true;
-    res.pump = body.indexOf("\"pump\":true") != -1;
+    res.ok             = true;
+    res.pump           = body.indexOf("\"pump\":true")           != -1;
+    res.buzzer         = body.indexOf("\"buzzer\":true")         != -1;
+    res.animal_detected= body.indexOf("\"animal_detected\":true")!= -1;
+
+    // Extract animal_type string from JSON
+    int atIdx = body.indexOf("\"animal_type\":\"");
+    if(atIdx != -1){
+      int start = atIdx + 15;
+      int end   = body.indexOf("\"", start);
+      if(end != -1) body.substring(start, end).toCharArray(res.animal_type, 32);
+    }
+    // Extract animal_threat string from JSON
+    int thIdx = body.indexOf("\"animal_threat\":\"");
+    if(thIdx != -1){
+      int start = thIdx + 17;
+      int end   = body.indexOf("\"", start);
+      if(end != -1) body.substring(start, end).toCharArray(res.animal_threat, 16);
+    }
+
+    if(res.animal_detected)
+      Serial.printf("[AI] Animal detected: %s (threat: %s)\n",
+        res.animal_type, res.animal_threat);
+
     http.end();
     return res; // success — exit retry loop
   }
 
   http.end();
 
-  if(code == -3 || code == -11){
-    Serial.printf("[HTTP] Send failed (err %d) — will retry\n", code);
-    continue; // retry on chunk/timeout errors
+  if(code == -1 || code == -3 || code == -11){
+    // -1  = connection refused (Render not ready yet)
+    // -3  = send failed / chunk error
+    // -11 = timeout
+    Serial.printf("[HTTP] Retriable error (%d) — will retry\n", code);
+    continue;
   }
 
   break; // non-retryable error — stop trying
@@ -541,10 +600,9 @@ void setup(){
 Serial.begin(115200);
 
 // Set relay OFF *before* pinMode — prevents auto-trigger at boot
-// Active LOW relay: HIGH = OFF, LOW = ON
-digitalWrite(RELAY_PIN, HIGH); // ensure OFF state first
+digitalWrite(RELAY_PIN, RELAY_OFF); // ensure OFF (respects RELAY_ACTIVE_LOW flag)
 pinMode(RELAY_PIN, OUTPUT);
-digitalWrite(RELAY_PIN, HIGH); // double-set after pinMode
+digitalWrite(RELAY_PIN, RELAY_OFF); // double-set after pinMode
 
 // Set buzzer OFF *before* pinMode — prevents continuous sound at boot
 // Active buzzer: HIGH = ON, LOW = OFF
@@ -586,8 +644,14 @@ Serial.printf("[READ] moisture=%d%% temp=%.1fC\n",moisture,tempC);
 bool sensorsValid=(tempC>-100);
 
 if(sensorsValid && moisture<MOISTURE_CRITICAL){
-beepAlert();
-pumpRun(PUMP_EMERGENCY_MS);
+  unsigned long now = millis();
+  if(now - lastEmergencyPumpMs > PUMP_EMERGENCY_COOLDOWN_MS){
+    Serial.printf("[PUMP] Moisture critical (%d%%) — auto pump ON\n", moisture);
+    pumpRun(PUMP_EMERGENCY_MS);   // silent — buzzer is reserved for animal detection only
+    lastEmergencyPumpMs = now;
+  } else {
+    Serial.printf("[PUMP] Moisture critical (%d%%) — cooldown active, skipping\n", moisture);
+  }
 }
 
 if(WiFi.status()==WL_CONNECTED){
@@ -595,7 +659,17 @@ if(WiFi.status()==WL_CONNECTED){
 ReportResult r=sendDeviceReport(moisture,tempC);
 
 if(r.ok && r.pump && sensorsValid){
-pumpRun(r.duration_ms);
+  pumpRun(r.duration_ms);
+}
+
+// Animal detected — sound buzzer to scare it away
+if(r.ok && r.animal_detected){
+  Serial.printf("[ANIMAL] %s detected (threat:%s) — sounding buzzer\n",
+    r.animal_type, r.animal_threat);
+  // High threat = aggressive 5-cycle alarm, low = 2-cycle warning
+  int cycles = (strcmp(r.animal_threat,"high")==0) ? 5 :
+               (strcmp(r.animal_threat,"low") ==0) ? 2 : 3;
+  beepAnimal(cycles);
 }
 
 }else{
