@@ -328,11 +328,19 @@ export default function LivePage({ isGuest, onAddToast }) {
             {/* Pump decision banner */}
             {live.ai_pump_reason && (
               <div className={`ai-pump-banner ${live.pump_activated ? 'pump-yes' : 'pump-no'}`}>
-                <span className="ai-pump-icon">{live.pump_activated ? '💧' : '✅'}</span>
-                <div>
-                  <div className="ai-pump-label">{live.pump_activated ? 'Watering Needed' : 'No Watering Needed'}</div>
+                <div className="ai-pump-icon-wrap">
+                  <span className="ai-pump-icon">{live.pump_activated ? '💧' : '✅'}</span>
+                </div>
+                <div className="ai-pump-text">
+                  <div className="ai-pump-label">
+                    {live.pump_activated ? '— Valve Opening —' : '— No Water Needed —'}
+                  </div>
+                  <div className="ai-pump-status-badge">
+                    {live.pump_activated ? 'WATERING ACTIVATED' : 'SOIL MOISTURE OK'}
+                  </div>
                   <div className="ai-pump-reason-text">{live.ai_pump_reason}</div>
                 </div>
+                {live.pump_activated && <div className="ai-pump-pulse-ring" />}
               </div>
             )}
 
@@ -342,12 +350,18 @@ export default function LivePage({ isGuest, onAddToast }) {
               {live.ai_alerts?.length > 0 && (
                 <div className="ai-insight-col ai-col-alert">
                   <div className="ai-col-header">
-                    <span className="ai-col-icon">🚨</span>
+                    <div className="ai-col-icon-box alert-icon-box">🚨</div>
                     <span className="ai-col-title">Alerts</span>
+                    <span className="ai-col-count">{live.ai_alerts.length}</span>
                   </div>
-                  {live.ai_alerts.map((a, i) => (
-                    <div key={i} className="ai-insight-item ai-alert-pill">{a}</div>
-                  ))}
+                  <div className="ai-col-items">
+                    {live.ai_alerts.map((a, i) => (
+                      <div key={i} className="ai-insight-item ai-alert-pill">
+                        <span className="ai-pill-dot alert-dot" />
+                        {a}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -355,14 +369,18 @@ export default function LivePage({ isGuest, onAddToast }) {
               {live.ai_immediate_actions?.length > 0 && (
                 <div className="ai-insight-col ai-col-action">
                   <div className="ai-col-header">
-                    <span className="ai-col-icon">⚡</span>
+                    <div className="ai-col-icon-box action-icon-box">⚡</div>
                     <span className="ai-col-title">Do Right Now</span>
+                    <span className="ai-col-count">{live.ai_immediate_actions.length}</span>
                   </div>
-                  {live.ai_immediate_actions.map((a, i) => (
-                    <div key={i} className="ai-insight-item ai-action-pill">
-                      <span className="ai-step-num">{i + 1}</span>{a}
-                    </div>
-                  ))}
+                  <div className="ai-col-items">
+                    {live.ai_immediate_actions.map((a, i) => (
+                      <div key={i} className="ai-insight-item ai-action-pill">
+                        <span className="ai-step-num">{i + 1}</span>
+                        <span>{a}</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -370,12 +388,18 @@ export default function LivePage({ isGuest, onAddToast }) {
               {live.ai_recommendations?.length > 0 && (
                 <div className="ai-insight-col ai-col-rec">
                   <div className="ai-col-header">
-                    <span className="ai-col-icon">💡</span>
+                    <div className="ai-col-icon-box rec-icon-box">💡</div>
                     <span className="ai-col-title">Tips for You</span>
+                    <span className="ai-col-count">{live.ai_recommendations.length}</span>
                   </div>
-                  {live.ai_recommendations.map((r, i) => (
-                    <div key={i} className="ai-insight-item ai-rec-pill">{r}</div>
-                  ))}
+                  <div className="ai-col-items">
+                    {live.ai_recommendations.map((r, i) => (
+                      <div key={i} className="ai-insight-item ai-rec-pill">
+                        <span className="ai-pill-dot rec-dot" />
+                        {r}
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>

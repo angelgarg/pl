@@ -104,6 +104,23 @@ function ZoneCard({ zone, deviceKey, onPumpCommand, isMaster }) {
               · {zone.last_seen_s > 0 ? `${zone.last_seen_s}s ago` : 'just now'}
             </span>}
           </div>
+          {zone.land_area_acres && (
+            <div style={{
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              marginTop: 5, padding: '2px 8px',
+              background: 'rgba(82,183,136,0.15)', borderRadius: 10,
+              border: '1px solid rgba(82,183,136,0.3)',
+            }}>
+              <span style={{ fontSize: 11, color: '#52b788', fontWeight: 600 }}>
+                {zone.land_area_acres} acres
+              </span>
+              {zone.land_area_bigha && (
+                <span style={{ fontSize: 10, color: 'rgba(255,255,255,0.35)' }}>
+                  ({zone.land_area_bigha} bigha)
+                </span>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

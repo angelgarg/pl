@@ -10,7 +10,7 @@
  * ║  WIRING:                                                     ║
  * ║   Soil moisture sensor  → GPIO 34 (analog in)               ║
  * ║   DS18B20 temp sensor   → GPIO 4  (+ 4.7kΩ pull-up to 3.3V)║
- * ║   Relay (pump)          → GPIO 26 (active LOW)              ║
+ * ║   Relay (solenoid valve)→ GPIO 26 (active LOW)              ║
  * ║   Buzzer (optional)     → GPIO 27                           ║
  * ╠══════════════════════════════════════════════════════════════╣
  * ║  SETUP:                                                      ║
@@ -34,6 +34,7 @@
 // ─────────────────────────────────────────────────────────────
 #define SLAVE_ID        "ZONE_01"       // ← unique per slave: ZONE_01, ZONE_02...
 #define ZONE_NAME       "Tomatoes"      // ← human label shown in dashboard
+#define ZONE_AREA_ACRES 1.0f            // ← land area of this zone in acres (1 acre ≈ 2.5 bigha in Haryana)
 #define WIFI_CHANNEL    1               // ← must match master's WiFi channel
                                         //   (check Serial Monitor on master — prints channel on boot)
 
@@ -46,7 +47,7 @@ uint8_t MASTER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // ← REPLACE WITH
 // ─────────────────────────────────────────────────────────────
 #define SOIL_PIN        34   // Analog input (ADC1 only — ADC2 conflicts with WiFi)
 #define DS18B20_PIN     4    // OneWire — needs 4.7kΩ pull-up resistor to 3.3V
-#define RELAY_PIN       26   // Active LOW relay — HIGH = pump OFF, LOW = pump ON
+#define RELAY_PIN       26   // Active LOW relay — HIGH = valve CLOSED, LOW = valve OPEN
 #define BUZZER_PIN      27   // Active buzzer — optional
 
 // ─────────────────────────────────────────────────────────────
@@ -78,15 +79,16 @@ typedef struct SensorPacket {
   char zone_name[32];      // e.g. "Tomatoes"
   int  moisture_pct;       // 0–100
   float temperature_c;     // e.g. 28.5
-  bool emergency_pump;     // true if slave already fired emergency pump locally
+  bool emergency_valve;    // true if slave already opened emergency valve locally
   uint32_t uptime_s;       // seconds since boot
+  float land_area_acres;   // zone land area in acres (set via ZONE_AREA_ACRES)
 } SensorPacket;
 
-// Master → Slave: pump command packet
+// Master → Slave: solenoid valve command packet
 typedef struct CommandPacket {
   char slave_id[16];       // target slave
-  bool pump_on;            // true = run pump
-  uint32_t pump_ms;        // how long to run pump (milliseconds)
+  bool valve_on;           // true = open solenoid valve
+  uint32_t valve_ms;       // how long to keep valve open (milliseconds)
   bool beep;               // true = beep confirmation
 } CommandPacket;
 
@@ -114,40 +116,26 @@ void beep(int ms, int n = 1) {
 }
 void beepBoot()    { beep(60, 2); }
 void beepAlert()   { beep(200, 3); }
-void beepPump()    { beep(60, 2); delay(60); beep(120, 1); }
+void beepValve()   { beep(60, 2); delay(60); beep(120, 1); } // two short + one long = valve open
 void beepCommand() { beep(80, 1); }  // short beep on receiving master command
 
 // ─────────────────────────────────────────────────────────────
-//  PUMP (same soft-start as master to protect battery shield)
+//  SOLENOID VALVE
+//  NOTE: NO soft-start needed — solenoid valve is an electromagnetic
+//  coil, not a motor. It opens instantly on RELAY_ON.
+//  Soft-start would cause partial-open states and is wrong for valves.
 // ─────────────────────────────────────────────────────────────
-void pumpSoftStart() {
-  digitalWrite(RELAY_PIN, LOW);  delay(80);
-  digitalWrite(RELAY_PIN, HIGH); delay(60);
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, LOW);  delay(150);
-  digitalWrite(RELAY_PIN, HIGH); delay(60);
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, LOW);  delay(300);
-  digitalWrite(RELAY_PIN, HIGH); delay(60);
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, LOW);
-  Serial.println("[PUMP] Soft-start done");
-}
-
-void pumpRun(unsigned long ms) {
-  Serial.printf("[PUMP] ON %lu ms\n", ms);
-  beepPump();
-  pumpSoftStart();
-  unsigned long runMs = (ms > 810) ? ms - 810 : 0;
-  if (runMs > 0) {
-    unsigned long end = millis() + runMs;
-    while (millis() < end) {
-      esp_task_wdt_reset();
-      delay(100);
-    }
+void valveRun(unsigned long ms) {
+  Serial.printf("[VALVE] OPEN %lu ms\n", ms);
+  beepValve();
+  digitalWrite(RELAY_PIN, LOW);   // valve opens immediately (active LOW)
+  unsigned long endMs = millis() + ms;
+  while (millis() < endMs) {
+    esp_task_wdt_reset();
+    delay(100);
   }
-  digitalWrite(RELAY_PIN, HIGH); // OFF
-  Serial.println("[PUMP] OFF");
+  digitalWrite(RELAY_PIN, HIGH);  // valve closes
+  Serial.println("[VALVE] CLOSED");
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -197,8 +185,8 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
 
   memcpy((void*)&latestCommand, &cmd, sizeof(cmd));
   commandReceived = true;
-  Serial.printf("[CMD] Received — pump=%s ms=%lu\n",
-    cmd.pump_on ? "ON" : "OFF", cmd.pump_ms);
+  Serial.printf("[CMD] Received — valve=%s ms=%lu\n",
+    cmd.valve_on ? "OPEN" : "CLOSED", cmd.valve_ms);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -246,10 +234,11 @@ bool sendToMaster(int moisture, float tempC, bool emergencyPump) {
   SensorPacket pkt;
   strncpy(pkt.slave_id,   SLAVE_ID,   sizeof(pkt.slave_id) - 1);
   strncpy(pkt.zone_name,  ZONE_NAME,  sizeof(pkt.zone_name) - 1);
-  pkt.moisture_pct   = moisture;
-  pkt.temperature_c  = tempC;
-  pkt.emergency_pump = emergencyPump;
-  pkt.uptime_s       = millis() / 1000;
+  pkt.moisture_pct    = moisture;
+  pkt.temperature_c   = tempC;
+  pkt.emergency_valve = emergencyPump; // field renamed; parameter kept same for clarity
+  pkt.uptime_s        = millis() / 1000;
+  pkt.land_area_acres = ZONE_AREA_ACRES;
 
   sendSuccess = false;
   esp_err_t result = esp_now_send(MASTER_MAC, (uint8_t*)&pkt, sizeof(pkt));
@@ -278,10 +267,10 @@ void setup() {
   Serial.printf("║  Zone: %-22s║\n", ZONE_NAME);
   Serial.printf("╚══════════════════════════════╝\n\n");
 
-  // Relay OFF before pinMode (active LOW — HIGH = OFF)
+  // Relay OFF before pinMode — solenoid valve stays CLOSED at boot (active LOW — HIGH = CLOSED)
   digitalWrite(RELAY_PIN, HIGH);
   pinMode(RELAY_PIN, OUTPUT);
-  digitalWrite(RELAY_PIN, HIGH);
+  digitalWrite(RELAY_PIN, HIGH); // double-set — valve must not open on boot
 
   // Buzzer OFF before pinMode
   digitalWrite(BUZZER_PIN, LOW);
@@ -313,11 +302,11 @@ void loop() {
   Serial.printf("[READ] %s | moisture=%d%% temp=%.1fC\n",
     SLAVE_ID, moisture, tempC);
 
-  // ── Emergency local pump (no need to wait for master) ──
+  // ── Emergency local valve open (no need to wait for master) ──
   if (moisture < MOISTURE_CRITICAL) {
-    Serial.println("[SLAVE] CRITICAL moisture — local emergency pump");
+    Serial.println("[SLAVE] CRITICAL moisture — local emergency valve OPEN");
     beepAlert();
-    pumpRun(PUMP_EMERGENCY_MS);
+    valveRun(PUMP_EMERGENCY_MS);
     emergencyRan = true;
   }
 
@@ -336,10 +325,10 @@ void loop() {
 
     if (commandReceived) {
       beepCommand();
-      if (latestCommand.pump_on && !emergencyRan) {
-        pumpRun(latestCommand.pump_ms);
-      } else if (latestCommand.pump_on && emergencyRan) {
-        Serial.println("[SLAVE] Master pump cmd skipped — emergency already ran");
+      if (latestCommand.valve_on && !emergencyRan) {
+        valveRun(latestCommand.valve_ms);
+      } else if (latestCommand.valve_on && emergencyRan) {
+        Serial.println("[SLAVE] Master valve cmd skipped — emergency already ran");
       }
     } else {
       Serial.println("[SLAVE] No command from master (timeout — normal if master decided no pump)");

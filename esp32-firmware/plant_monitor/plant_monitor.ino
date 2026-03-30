@@ -8,7 +8,7 @@
  * ║   • Connects to WiFi + sends AI reports to cloud        ║
  * ║   • Receives sensor data from up to 10 slave nodes      ║
  * ║     via ESP-NOW (no router needed between devices)       ║
- * ║   • Relays pump commands back to each slave              ║
+ * ║   • Relays solenoid valve commands back to each slave    ║
  * ║   • Master MAC address printed on boot (Serial Monitor) ║
  * ╠══════════════════════════════════════════════════════════╣
  * ║  SETUP INSTRUCTIONS:                                     ║
@@ -34,7 +34,7 @@
 
 // ───────────────── STRUCTS ─────────────────
 struct ReportResult {
-  bool pump;
+  bool valve;             // true = open solenoid valve (water flow)
   unsigned long duration_ms;
   bool buzzer;
   int health_score;
@@ -57,14 +57,15 @@ typedef struct SensorPacket {
   char zone_name[32];
   int  moisture_pct;
   float temperature_c;
-  bool emergency_pump;
+  bool emergency_valve;    // true if slave already fired emergency valve locally
   uint32_t uptime_s;
+  float land_area_acres;   // zone land size in acres (sent from slave config)
 } SensorPacket;
 
 typedef struct CommandPacket {
   char slave_id[16];
-  bool pump_on;
-  uint32_t pump_ms;
+  bool valve_on;           // true = open solenoid valve
+  uint32_t valve_ms;       // how long to keep valve open (milliseconds)
   bool beep;
 } CommandPacket;
 
@@ -77,7 +78,8 @@ struct SlaveRecord {
   uint8_t mac[6];
   int moisture_pct;
   float temperature_c;
-  bool emergency_pump;
+  bool emergency_valve;   // true if slave already fired emergency valve locally
+  float land_area_acres;
   uint32_t last_seen;     // millis() of last ESP-NOW packet
   bool active;
   bool peer_registered;
@@ -103,18 +105,17 @@ void setupWiFiNetworks() {
 
 #define MOISTURE_CRITICAL 20
 #define MOISTURE_DRY 30
-#define PUMP_EMERGENCY_MS 8000
-#define PUMP_EMERGENCY_COOLDOWN_MS 120000  // 2 min cooldown — stops repeated emergency pumping
+#define VALVE_EMERGENCY_MS 8000            // ms to open valve during local emergency
+#define VALVE_EMERGENCY_COOLDOWN_MS 120000 // 2 min cooldown — stops repeated emergency openings
 
-// ── RELAY TYPE — change if pump behaviour is inverted ──
+// ── RELAY TYPE — change if valve behaviour is inverted ──
 // true  = active LOW relay  (LOW=ON, HIGH=OFF) — most common blue relay modules
 // false = active HIGH relay (HIGH=ON, LOW=OFF) — some red/black modules
 #define RELAY_ACTIVE_LOW true
-
 // ───────────────── PINS ─────────────────
 #define SOIL_PIN 1
 #define DS18B20_PIN 14
-#define RELAY_PIN 38   // pump relay — GPIO 38
+#define RELAY_PIN 38   // solenoid valve relay — GPIO 38
 #define BUZZER_PIN 21  // buzzer soldered to GPIO 21
 
 // Camera pins
@@ -142,7 +143,7 @@ void setupWiFiNetworks() {
 OneWire oneWire(DS18B20_PIN);
 DallasTemperature tempSensor(&oneWire);
 bool cameraOK = false;
-unsigned long lastEmergencyPumpMs = 0;  // cooldown tracker for local emergency pump
+unsigned long lastEmergencyValveMs = 0; // cooldown tracker for local emergency valve open
 
 #define OFFLINE_QUEUE_SIZE 5
 OfflineReading offlineQueue[OFFLINE_QUEUE_SIZE];
@@ -159,7 +160,7 @@ void beep(int ms, int n = 1) {
 
 void beepBoot()  { beep(80,3); }
 void beepFail()  { beep(500,2); }
-void beepPump()  { beep(60,2); delay(60); beep(180,1); }
+void beepValve() { beep(60,2); delay(60); beep(180,1); } // two short + one long = valve open
 // Animal detected — aggressive pattern: 3× (short-short-long) to scare animal away
 void beepAnimal(int cycles=3) {
   for(int c=0; c<cycles; c++){
@@ -168,36 +169,24 @@ void beepAnimal(int cycles=3) {
   }
 }
 
-// ───────────────── PUMP ─────────────────
+// ───────────────── SOLENOID VALVE ─────────────────
 #define RELAY_ON  (RELAY_ACTIVE_LOW ? LOW  : HIGH)
 #define RELAY_OFF (RELAY_ACTIVE_LOW ? HIGH : LOW)
 
-// Soft-start: gradually ramp up pump in 3 pulses before full ON
-// This reduces inrush current spike that can trip battery shield overcurrent protection
-void pumpSoftStart(){
-  digitalWrite(RELAY_PIN, RELAY_ON);  delay(80);   // pulse 1 — short burst
-  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, RELAY_ON);  delay(150);  // pulse 2 — longer burst
-  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, RELAY_ON);  delay(300);  // pulse 3 — motor nearly at speed
-  digitalWrite(RELAY_PIN, RELAY_OFF); delay(60);   // brief OFF
-  esp_task_wdt_reset();
-  digitalWrite(RELAY_PIN, RELAY_ON);  // full ON — motor already spinning
-  Serial.printf("[PUMP] Soft-start complete — full ON (active-%s)\n",
+// NOTE: Solenoid valve — NO soft-start needed.
+// Unlike a pump, a solenoid valve has no motor to spin up.
+// It is a simple electromagnetic coil that opens/closes instantly.
+// Soft-start would cause partial-open states — valve opens fully on first RELAY_ON.
+void valveRun(unsigned long ms){
+  Serial.printf("[VALVE] OPEN %lu ms (active-%s)\n", ms,
     RELAY_ACTIVE_LOW ? "LOW" : "HIGH");
-}
-
-void pumpRun(unsigned long ms){
-  Serial.printf("[PUMP] ON %lu ms (with soft-start)\n", ms);
-  beepPump();
-  pumpSoftStart();
+  beepValve();
+  digitalWrite(RELAY_PIN, RELAY_ON);   // valve opens immediately
   esp_task_wdt_reset();
-  unsigned long runMs = (ms > 810) ? ms - 810 : 0;
-  if(runMs > 0) delay(runMs);
-  digitalWrite(RELAY_PIN, RELAY_OFF);
-  Serial.println("[PUMP] OFF");
+  unsigned long endMs = millis() + ms;
+  while(millis() < endMs){ esp_task_wdt_reset(); delay(100); }
+  digitalWrite(RELAY_PIN, RELAY_OFF);  // valve closes
+  Serial.println("[VALVE] CLOSED");
 }
 
 // ───────────────── MOISTURE ─────────────────
@@ -320,7 +309,8 @@ void onSlaveData(const uint8_t *mac, const uint8_t *data, int len) {
   strncpy(slaves[idx].zone_name, pkt.zone_name, 31);
   slaves[idx].moisture_pct    = pkt.moisture_pct;
   slaves[idx].temperature_c   = pkt.temperature_c;
-  slaves[idx].emergency_pump  = pkt.emergency_pump;
+  slaves[idx].emergency_valve = pkt.emergency_valve;
+  slaves[idx].land_area_acres = pkt.land_area_acres;
   slaves[idx].last_seen       = millis();
   slaves[idx].active          = true;
   portEXIT_CRITICAL(&slaveMux);
@@ -344,30 +334,30 @@ void onSlaveData(const uint8_t *mac, const uint8_t *data, int len) {
   }
 }
 
-// Send pump command to a specific slave by index
-void sendPumpCommand(int idx, bool pumpOn, uint32_t pumpMs) {
+// Send valve command to a specific slave by index
+void sendValveCommand(int idx, bool valveOn, uint32_t valveMs) {
   if (idx < 0 || idx >= slaveCount) return;
   if (!slaves[idx].peer_registered) return;
 
   CommandPacket cmd;
   strncpy(cmd.slave_id, slaves[idx].slave_id, 15);
-  cmd.pump_on  = pumpOn;
-  cmd.pump_ms  = pumpMs;
-  cmd.beep     = pumpOn;
+  cmd.valve_on = valveOn;
+  cmd.valve_ms = valveMs;
+  cmd.beep     = valveOn;
 
   esp_err_t res = esp_now_send(slaves[idx].mac, (uint8_t*)&cmd, sizeof(cmd));
-  Serial.printf("[ESPNOW] → %s pump=%s (%s)\n",
-    cmd.slave_id, pumpOn ? "ON" : "OFF",
+  Serial.printf("[ESPNOW] → %s valve=%s (%s)\n",
+    cmd.slave_id, valveOn ? "OPEN" : "CLOSED",
     res == ESP_OK ? "sent" : "error");
 }
 
-// Decide pump for each slave based on their moisture (local fallback)
+// Decide valve for each slave based on their moisture (local fallback)
 void processSlaveCommands() {
   for (int i = 0; i < slaveCount; i++) {
     if (!slaves[i].active) continue;
     // If slave moisture is critical and hasn't had emergency already
-    if (slaves[i].moisture_pct < 25 && !slaves[i].emergency_pump) {
-      sendPumpCommand(i, true, 6000);
+    if (slaves[i].moisture_pct < 25 && !slaves[i].emergency_valve) {
+      sendValveCommand(i, true, 6000);
     }
   }
 }
@@ -384,6 +374,7 @@ String buildSlavesJson() {
     json += "\"zone_name\":\"" + String(slaves[i].zone_name) + "\",";
     json += "\"moisture_pct\":" + String(slaves[i].moisture_pct) + ",";
     json += "\"temperature_c\":" + String(slaves[i].temperature_c, 1) + ",";
+    json += "\"land_area_acres\":" + String(slaves[i].land_area_acres, 2) + ",";
     json += "\"online\":" + String(online ? "true" : "false") + ",";
     json += "\"last_seen_s\":" + String((millis() - slaves[i].last_seen) / 1000);
     json += "}";
@@ -469,35 +460,36 @@ return false;
 // and wait up to 40 seconds for it to wake before sending image
 bool wakeBackend(){
   // Render free tier can take up to 60s on cold start
-  // We try up to 4 times with 60s timeout each
-  for(int attempt=1; attempt<=4; attempt++){
+  // Try up to 6 times — each attempt has its own fresh SSL client
+  for(int attempt=1; attempt<=6; attempt++){
     WiFiClientSecure wc;
     wc.setInsecure();
+    wc.setTimeout(30);        // 30s SSL socket timeout (overrides 5s default)
     HTTPClient hh;
     String pingUrl = String(BACKEND_URL) + "/health";
     if(!hh.begin(wc, pingUrl)){ hh.end(); continue; }
-    hh.setTimeout(60000); // 60s — covers worst-case Render cold start
-    Serial.printf("[WAKE] Pinging backend (attempt %d/4)...\n", attempt);
+    hh.setTimeout(30000);     // 30s HTTP timeout
+    hh.setConnectTimeout(30000);
+    Serial.printf("[WAKE] Pinging backend (attempt %d/6)...\n", attempt);
     int c = hh.GET();
     hh.end();
     if(c > 0){
       Serial.printf("[WAKE] Backend ready (attempt %d, HTTP %d)\n", attempt, c);
-      // Wait 5s after wake — Render needs time to fully init SSL/TCP stack
-      // before it can handle a heavy POST with image data
+      // Wait 5s — let Render fully settle before heavy SSL POST
       for(int g=0;g<5;g++){ delay(1000); esp_task_wdt_reset(); }
       return true;
     }
-    Serial.printf("[WAKE] Attempt %d failed (err %d) — waiting 8s\n", attempt, c);
-    for(int w=0;w<8;w++){ delay(1000); esp_task_wdt_reset(); }
+    Serial.printf("[WAKE] Attempt %d failed (err %d) — waiting 10s\n", attempt, c);
+    for(int w=0;w<10;w++){ delay(1000); esp_task_wdt_reset(); }
   }
-  Serial.println("[WAKE] Backend unreachable after 4 attempts");
+  Serial.println("[WAKE] Backend unreachable after 6 attempts");
   return false;
 }
 
 // ───────────────── HTTP REPORT ─────────────────
 ReportResult sendDeviceReport(int moisture,float tempC){
 
-ReportResult res={false,5000,false,-1,false,false,"none","none"};
+ReportResult res={false,5000,false,-1,false,false,"none","none"}; // valve=false by default
 
 // Wake Render first — avoids SSL timeout on cold start
 if(!wakeBackend()) return res;
@@ -519,6 +511,7 @@ for(int attempt=1; attempt<=3; attempt++){
 
   WiFiClientSecure client;
   client.setInsecure();
+  client.setTimeout(60); 
   HTTPClient http;
   http.setReuse(false); // fresh connection each attempt — prevents stale SSL issues
 
@@ -550,7 +543,7 @@ for(int attempt=1; attempt<=3; attempt++){
   if(code == 200){
     String body = http.getString();
     res.ok             = true;
-    res.pump           = body.indexOf("\"pump\":true")           != -1;
+    res.valve          = body.indexOf("\"pump\":true")           != -1; // backend still sends "pump" key
     res.buzzer         = body.indexOf("\"buzzer\":true")         != -1;
     res.animal_detected= body.indexOf("\"animal_detected\":true")!= -1;
 
@@ -599,10 +592,10 @@ void setup(){
 
 Serial.begin(115200);
 
-// Set relay OFF *before* pinMode — prevents auto-trigger at boot
-digitalWrite(RELAY_PIN, RELAY_OFF); // ensure OFF (respects RELAY_ACTIVE_LOW flag)
+// Set relay OFF *before* pinMode — prevents solenoid valve from auto-opening at boot
+digitalWrite(RELAY_PIN, RELAY_OFF); // ensure valve CLOSED (respects RELAY_ACTIVE_LOW flag)
 pinMode(RELAY_PIN, OUTPUT);
-digitalWrite(RELAY_PIN, RELAY_OFF); // double-set after pinMode
+digitalWrite(RELAY_PIN, RELAY_OFF); // double-set after pinMode — solenoid valve stays closed
 
 // Set buzzer OFF *before* pinMode — prevents continuous sound at boot
 // Active buzzer: HIGH = ON, LOW = OFF
@@ -610,7 +603,7 @@ digitalWrite(BUZZER_PIN, LOW); // silence first
 pinMode(BUZZER_PIN, OUTPUT);
 digitalWrite(BUZZER_PIN, LOW); // double-set after pinMode
 
-esp_task_wdt_init(180,true); // 3 min — covers 4x wake attempts (60s each) + main request
+esp_task_wdt_init(300,true); // 5 min — covers 6x wake attempts (30s+10s each) + main request
 esp_task_wdt_add(NULL);
 
 tempSensor.begin();
@@ -645,12 +638,12 @@ bool sensorsValid=(tempC>-100);
 
 if(sensorsValid && moisture<MOISTURE_CRITICAL){
   unsigned long now = millis();
-  if(now - lastEmergencyPumpMs > PUMP_EMERGENCY_COOLDOWN_MS){
-    Serial.printf("[PUMP] Moisture critical (%d%%) — auto pump ON\n", moisture);
-    pumpRun(PUMP_EMERGENCY_MS);   // silent — buzzer is reserved for animal detection only
-    lastEmergencyPumpMs = now;
+  if(now - lastEmergencyValveMs > VALVE_EMERGENCY_COOLDOWN_MS){
+    Serial.printf("[VALVE] Moisture critical (%d%%) — emergency valve OPEN\n", moisture);
+    valveRun(VALVE_EMERGENCY_MS); // silent — buzzer is reserved for animal detection only
+    lastEmergencyValveMs = now;
   } else {
-    Serial.printf("[PUMP] Moisture critical (%d%%) — cooldown active, skipping\n", moisture);
+    Serial.printf("[VALVE] Moisture critical (%d%%) — cooldown active, skipping\n", moisture);
   }
 }
 
@@ -658,8 +651,8 @@ if(WiFi.status()==WL_CONNECTED){
 
 ReportResult r=sendDeviceReport(moisture,tempC);
 
-if(r.ok && r.pump && sensorsValid){
-  pumpRun(r.duration_ms);
+if(r.ok && r.valve && sensorsValid){
+  valveRun(r.duration_ms);
 }
 
 // Animal detected — sound buzzer to scare it away

@@ -45,14 +45,16 @@ function updateFarmData(deviceKey, masterData, slavesArr) {
     slavesArr.forEach(s => {
       if (!s.slave_id) return;
       farm.slaves[s.slave_id] = {
-        slave_id:      s.slave_id,
-        zone_name:     s.zone_name || s.slave_id,
-        moisture_pct:  s.moisture_pct,
-        temperature_c: s.temperature_c,
-        online:        s.online !== false,
-        last_seen:     new Date().toISOString(),
-        last_seen_s:   s.last_seen_s || 0,
-        is_master:     false,
+        slave_id:         s.slave_id,
+        zone_name:        s.zone_name || s.slave_id,
+        moisture_pct:     s.moisture_pct,
+        temperature_c:    s.temperature_c,
+        land_area_acres:  s.land_area_acres || null,
+        land_area_bigha:  s.land_area_acres ? +(s.land_area_acres * 2.5).toFixed(2) : null, // 1 acre ≈ 2.5 bigha (Haryana)
+        online:           s.online !== false,
+        last_seen:        new Date().toISOString(),
+        last_seen_s:      s.last_seen_s || 0,
+        is_master:        false,
       };
     });
   }
