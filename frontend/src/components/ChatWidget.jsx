@@ -124,16 +124,25 @@ export default function ChatWidget() {
     const trimmed = (text || input).trim();
     if (!trimmed || loading) return;
 
+    // Snapshot current messages BEFORE state update for history
+    const historySnapshot = [...messages];
+
     setInput('');
-    setMessages(prev => [...prev, { role: 'user', content: trimmed }]);
+    // Add user message immediately
+    const userMsg = { role: 'user', content: trimmed };
+    setMessages(prev => [...prev, userMsg]);
     setLoading(true);
 
     try {
-      const { reply } = await sendChatMessage(trimmed, lang);
+      // Send conversation history so Gemini has full context
+      const { reply } = await sendChatMessage(trimmed, lang, historySnapshot);
       setMessages(prev => [...prev, { role: 'ai', content: reply }]);
       if (!open) setUnread(n => n + 1);
     } catch (err) {
-      setMessages(prev => [...prev, { role: 'ai', content: t('chatError') }]);
+      setMessages(prev => [...prev, {
+        role: 'ai',
+        content: t('chatError') || 'Sorry, something went wrong. Please try again.'
+      }]);
     } finally {
       setLoading(false);
     }

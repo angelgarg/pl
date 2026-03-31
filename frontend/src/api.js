@@ -343,10 +343,10 @@ export const googleLogin = async (credential) => {
 };
 
 // ── AI Chat endpoint ──────────────────────────────────────────
-export const sendChatMessage = async (message, lang = 'en') => {
+export const sendChatMessage = async (message, lang = 'en', history = []) => {
   const res = await apiFetch('/api/chat', {
     method: 'POST',
-    body: JSON.stringify({ message, lang })
+    body: JSON.stringify({ message, lang, history })
   }, 30000);
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Chat failed');

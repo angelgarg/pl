@@ -1632,52 +1632,109 @@ const FALLBACK_RESPONSES = {
   ],
 };
 
+// Smart keyword-based fallback when Gemini is unavailable
+// Matches user's question to the closest relevant answer
+function keywordFallback(message, lang) {
+  const m = message.toLowerCase();
+  const tips = {
+    en: {
+      crop:     'For crop selection, consider your soil type and season. In summer: okra, cucumber, moong dal work well. In winter: wheat, mustard, peas. Check local KVK recommendations for your region.',
+      plant:    'For plant selection, match the plant to your climate zone. Tropical plants need 25-35°C. Check if your soil pH (6-7 is ideal for most plants) matches the plant requirements.',
+      water:    'Water when soil moisture drops below 40%. Early morning (6-9 AM) is best — reduces evaporation by 30% and prevents fungal disease. Avoid watering in the afternoon heat.',
+      disease:  'Common diseases: powdery mildew (white powder on leaves) — spray neem oil. Early blight (brown spots) — use mancozeb 2g/L. Yellow mosaic — remove infected plants immediately.',
+      pest:     'For pest control: neem oil spray (5ml/L) works for most soft-bodied insects. For fungus gnats in soil, let the top 2cm dry between waterings. For mites, spray underside of leaves.',
+      soil:     'Ideal soil moisture is 40-70%. pH 6-7 suits most crops. Add organic compost to improve water retention. Test soil pH with a simple kit — available at any agri shop.',
+      fertilizer: 'For fertilizer: NPK 19-19-19 is good all-purpose. Apply when moisture is 50-70% (not dry soil). Organic: cow dung compost, vermicompost are excellent for long-term soil health.',
+      temp:     'If temperature is above 35°C, provide shade cloth (50% shade) and increase watering frequency. Below 10°C, protect sensitive plants with covers. Most crops do best at 20-30°C.',
+      pump:     'Your BhoomiIQ system will automatically activate the valve when moisture drops below threshold. You can also manually trigger watering from the dashboard.',
+      default:  'I can help with crop selection, watering schedules, disease identification, soil health, pest control, and fertilizer recommendations. What specific problem are you facing with your plants?'
+    },
+    hi: {
+      crop:     'फसल चुनाव के लिए: गर्मियों में भिंडी, खीरा, मूंग अच्छे रहते हैं। सर्दियों में गेहूं, सरसों, मटर। अपनी मिट्टी की जांच करवाएं।',
+      plant:    'पौधे का चुनाव जलवायु के अनुसार करें। अधिकांश पौधों के लिए pH 6-7 सबसे अच्छा है।',
+      water:    'पानी सुबह 6-9 बजे दें। मिट्टी की नमी 40% से कम हो तो तुरंत पानी दें।',
+      disease:  'सफेद पाउडर — नीम तेल स्प्रे करें। भूरे धब्बे — मैन्कोज़ेब 2g/L। पीले पत्ते — नाइट्रोजन की कमी, यूरिया दें।',
+      pest:     'कीट नियंत्रण: नीम तेल 5ml/L पानी में मिलाकर स्प्रे करें। यह अधिकांश कीटों के लिए काम करता है।',
+      soil:     'आदर्श नमी 40-70%। pH 6-7 अधिकांश फसलों के लिए सही है। जैविक खाद डालें।',
+      default:  'मैं फसल, पानी, बीमारी, मिट्टी, कीट और खाद के बारे में मदद कर सकता हूं। आपकी क्या समस्या है?'
+    }
+  };
+
+  const langTips = tips[lang] || tips.en;
+  if (m.includes('crop') || m.includes('फसल') || m.includes('grow') || m.includes('plant') || m.includes('उगा')) return langTips.crop || langTips.plant || langTips.default;
+  if (m.includes('water') || m.includes('irrigat') || m.includes('पानी') || m.includes('सिंच')) return langTips.water || langTips.default;
+  if (m.includes('disease') || m.includes('blight') || m.includes('fungus') || m.includes('बीमारी') || m.includes('रोग')) return langTips.disease || langTips.default;
+  if (m.includes('pest') || m.includes('insect') || m.includes('bug') || m.includes('कीट') || m.includes('कीड़')) return langTips.pest || langTips.default;
+  if (m.includes('soil') || m.includes('मिट्टी') || m.includes('moisture') || m.includes('नमी')) return langTips.soil || langTips.default;
+  if (m.includes('fertiliz') || m.includes('खाद') || m.includes('npk') || m.includes('compost')) return langTips.fertilizer || langTips.default;
+  if (m.includes('temp') || m.includes('heat') || m.includes('cold') || m.includes('तापमान')) return langTips.temp || langTips.default;
+  if (m.includes('pump') || m.includes('valve') || m.includes('पंप')) return langTips.pump || langTips.default;
+  return langTips.default;
+}
+
 app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
-  const { message, lang } = req.body;
+  const { message, lang, history = [] } = req.body;
   if (!message || typeof message !== 'string') {
     return res.status(400).json({ error: 'message required' });
   }
 
   const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
-  const safeLang      = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
-  const systemPrompt  = CHAT_SYSTEM_PROMPTS[safeLang];
+  const safeLang       = (lang && CHAT_SYSTEM_PROMPTS[lang]) ? lang : 'en';
+  const systemPrompt   = CHAT_SYSTEM_PROMPTS[safeLang];
 
-  // Fallback when no API key
+  console.log(`[CHAT] message="${message.slice(0,60)}" lang=${safeLang} key=${GEMINI_API_KEY ? 'SET' : 'MISSING'}`);
+
+  // Fallback when no API key — keyword-aware, not random
   if (!GEMINI_API_KEY) {
-    const pool  = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
-    const reply = pool[Math.floor(Math.random() * pool.length)];
+    const reply = keywordFallback(message, safeLang);
     return res.json({ reply });
   }
 
   try {
     const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
-    const response  = await fetch(geminiUrl, {
+
+    // Build conversation history in Gemini role format
+    // history is [{role:'user'|'ai', content:'...'}] from frontend
+    const contents = [];
+
+    // Include up to last 6 turns (12 messages) for context
+    const recentHistory = history.slice(-12);
+    for (const msg of recentHistory) {
+      if (msg.role === 'user') {
+        contents.push({ role: 'user',  parts: [{ text: msg.content }] });
+      } else if (msg.role === 'ai') {
+        contents.push({ role: 'model', parts: [{ text: msg.content }] });
+      }
+    }
+    // Add current message
+    contents.push({ role: 'user', parts: [{ text: message.slice(0, 800) }] });
+
+    const response = await fetch(geminiUrl, {
       method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        contents: [{
-          parts: [{
-            text: `${systemPrompt}\n\nUser: ${message.slice(0, 500)}`
-          }]
-        }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents,
         generationConfig: {
           temperature:     0.7,
-          maxOutputTokens: 300
+          maxOutputTokens: 400
         }
       })
     });
 
     if (!response.ok) {
       const errText = await response.text();
-      console.error('[CHAT] Gemini error:', errText);
-      // Graceful fallback instead of 502
-      const pool  = FALLBACK_RESPONSES[safeLang] || FALLBACK_RESPONSES.en;
-      return res.json({ reply: pool[Math.floor(Math.random() * pool.length)] });
+      console.error('[CHAT] Gemini error:', response.status, errText.slice(0, 200));
+      return res.json({ reply: keywordFallback(message, safeLang) });
     }
 
     const data  = await response.json();
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim()
-                  || 'Sorry, I could not generate a response.';
+    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    if (!reply) {
+      console.warn('[CHAT] Empty Gemini response:', JSON.stringify(data).slice(0, 200));
+      return res.json({ reply: keywordFallback(message, safeLang) });
+    }
+    console.log(`[CHAT] OK — reply length=${reply.length}`);
     res.json({ reply });
   } catch (err) {
     console.error('[CHAT] Error:', err.message);
