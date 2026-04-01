@@ -104,6 +104,8 @@ portMUX_TYPE slaveMux = portMUX_INITIALIZER_UNLOCKED;
 WiFiMulti wifiMulti;
 void setupWiFiNetworks() {
   wifiMulti.addAP("CILP_Open",  "cilp@tiet#b122");   // college garden WiFi
+  wifiMulti.addAP("GuestHouse", "ghouse@tugh");       // guest house
+  wifiMulti.addAP("HostelQ",    "hostelnet");          // hostel
   wifiMulti.addAP("Tiuu",       "12345678");          // backup: home
   // wifiMulti.addAP("MyHotspot", "password");        // ← add mobile hotspot as field fallback
 }
