@@ -106,6 +106,7 @@ typedef struct CommandPacket {
   bool valve_on;           // true = open solenoid valve
   uint32_t valve_ms;       // how long to keep valve open (milliseconds)
   bool beep;               // true = beep confirmation
+  bool allow_water;        // false = night mode — suppress local emergency valve
 } CommandPacket;
 
 // ─────────────────────────────────────────────────────────────
@@ -118,7 +119,8 @@ volatile bool commandReceived = false;
 volatile CommandPacket latestCommand;
 volatile bool sendSuccess = false;
 
-float lastGoodTemp = 25.0;
+float lastGoodTemp  = 25.0;
+bool  allowWater    = true;  // updated each cycle from master — false = night mode, no valve
 
 // ─────────────────────────────────────────────────────────────
 //  BUZZER
@@ -315,15 +317,19 @@ void loop() {
   float tempC        = readTemperatureC();
   bool  emergencyRan = false;
 
-  Serial.printf("[READ] %s | moisture=%d%% temp=%.1fC\n",
-    SLAVE_ID, moisture, tempC);
+  Serial.printf("[READ] %s | moisture=%d%% temp=%.1fC | water=%s\n",
+    SLAVE_ID, moisture, tempC, allowWater ? "allowed" : "NIGHT");
 
-  // ── Emergency local valve open (no need to wait for master) ──
+  // ── Emergency local valve — only if master allows (day mode) ──
   if (moisture < MOISTURE_CRITICAL) {
-    Serial.println("[SLAVE] CRITICAL moisture — local emergency valve OPEN");
-    beepAlert();
-    valveRun(VALVE_EMERGENCY_MS);
-    emergencyRan = true;
+    if (allowWater) {
+      Serial.println("[SLAVE] CRITICAL moisture — local emergency valve OPEN");
+      beepAlert();
+      valveRun(VALVE_EMERGENCY_MS);
+      emergencyRan = true;
+    } else {
+      Serial.printf("[SLAVE] CRITICAL moisture (%d%%) — NIGHT MODE, valve suppressed\n", moisture);
+    }
   }
 
   // ── Send data to master ──
@@ -332,7 +338,7 @@ void loop() {
   Serial.printf("[SLAVE] Send to master: %s\n", sent ? "OK" : "FAILED");
 
   if (sent) {
-    // Wait for pump command from master (up to MASTER_TIMEOUT_MS)
+    // Wait for command/heartbeat from master (up to MASTER_TIMEOUT_MS)
     uint32_t waitStart = millis();
     while (!commandReceived && millis() - waitStart < MASTER_TIMEOUT_MS) {
       esp_task_wdt_reset();
@@ -340,14 +346,19 @@ void loop() {
     }
 
     if (commandReceived) {
+      // Update night/day mode from master's heartbeat
+      allowWater = latestCommand.allow_water;
+      Serial.printf("[SLAVE] Master says: water=%s\n", allowWater ? "allowed" : "NIGHT");
       beepCommand();
-      if (latestCommand.valve_on && !emergencyRan) {
+      if (latestCommand.valve_on && !emergencyRan && allowWater) {
         valveRun(latestCommand.valve_ms);
       } else if (latestCommand.valve_on && emergencyRan) {
         Serial.println("[SLAVE] Master valve cmd skipped — emergency already ran");
+      } else if (latestCommand.valve_on && !allowWater) {
+        Serial.println("[SLAVE] Master valve cmd skipped — night mode");
       }
     } else {
-      Serial.println("[SLAVE] No command from master (timeout — normal if master decided no pump)");
+      Serial.println("[SLAVE] No command from master (timeout — keeping last water mode)");
     }
   }
 

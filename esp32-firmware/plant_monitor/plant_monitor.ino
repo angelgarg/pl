@@ -31,6 +31,7 @@
 #include "esp_task_wdt.h"
 #include <esp_now.h>
 #include <esp_wifi.h>
+#include <time.h>       // NTP time — for night mode + date in reports
 
 // ───────────────── STRUCTS ─────────────────
 struct ReportResult {
@@ -67,6 +68,7 @@ typedef struct CommandPacket {
   bool valve_on;           // true = open solenoid valve
   uint32_t valve_ms;       // how long to keep valve open (milliseconds)
   bool beep;
+  bool allow_water;        // false = night mode — slave must NOT open valve locally
 } CommandPacket;
 
 // ── Slave registry (up to 10 slaves) ──
@@ -113,12 +115,17 @@ void setupWiFiNetworks() {
 #define BACKEND_URL  "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
 #define DEVICE_KEY   "piq-1D7ADC-E53119"             // ← from BhoomiIQ dashboard
 
-#define REPORT_INTERVAL_S 60             // 60s — stable on college WiFi, reduces reconnects
+#define SENSOR_INTERVAL_S        60      // read sensors + check emergency every 60s (day & night)
+#define CLOUD_REPORT_INTERVAL_H  3       // send AI report every 3 hours (daytime only)
 
 #define MOISTURE_CRITICAL 25             // % — emergency valve fires immediately (outdoor garden soil)
 #define MOISTURE_DRY      40             // % — "dry" warning level for AI report
 #define VALVE_EMERGENCY_MS       12000   // ms — 12s valve open per emergency (garden plot size)
 #define VALVE_EMERGENCY_COOLDOWN_MS 300000 // 5 min cooldown — prevents over-watering outdoor garden
+
+// ── Night / Day schedule (IST) ──
+#define DAY_START_HOUR   6   // 6 AM — watering + cloud reports resume
+#define NIGHT_START_HOUR 21  // 9 PM — no watering, no cloud reports
 
 // ── RELAY TYPE — change if valve behaviour is inverted ──
 // true  = active LOW relay  (LOW=ON, HIGH=OFF) — most common blue relay modules
@@ -161,6 +168,13 @@ DallasTemperature tempSensor(&oneWire);
 bool cameraOK = false;
 unsigned long lastEmergencyValveMs = 0; // cooldown tracker for local emergency valve open
 
+// Loop timing — millis() based, replaces blocking delay
+unsigned long lastSensorMs     = 0;  // last sensor read
+unsigned long lastCloudMs      = 0;  // last cloud AI report
+bool          firstCloudDone   = false; // send first report on boot (before 3h timer)
+#define SENSOR_INTERVAL_MS     (SENSOR_INTERVAL_S * 1000UL)
+#define CLOUD_REPORT_INTERVAL_MS (CLOUD_REPORT_INTERVAL_H * 3600UL * 1000UL)
+
 #define OFFLINE_QUEUE_SIZE 5
 OfflineReading offlineQueue[OFFLINE_QUEUE_SIZE];
 int offlineHead = 0;
@@ -183,6 +197,54 @@ void beepAnimal(int cycles=3) {
     beep(80,2); delay(60); beep(400,1);
     if(c < cycles-1) delay(200);
   }
+}
+
+// ───────────────── NTP TIME (IST = UTC+5:30) ─────────────────
+
+void syncNTP() {
+  // India Standard Time = UTC + 5h30m = 19800 seconds offset
+  configTime(19800, 0, "pool.ntp.org", "time.google.com", "time.cloudflare.com");
+  Serial.print("[NTP] Syncing");
+  time_t now = time(nullptr);
+  int tries = 0;
+  while (now < 1000000000UL && tries++ < 20) {
+    delay(500); esp_task_wdt_reset();
+    Serial.print(".");
+    now = time(nullptr);
+  }
+  Serial.println();
+  if (now > 1000000000UL) {
+    struct tm *t = localtime(&now);
+    char buf[40];
+    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S IST", t);
+    Serial.printf("[NTP] Synced — %s\n", buf);
+  } else {
+    Serial.println("[NTP] Sync failed — watering allowed until NTP syncs (safe default)");
+  }
+}
+
+bool isTimeReady() {
+  return time(nullptr) > 1000000000UL;
+}
+
+// Returns true during night hours (9 PM – 6 AM IST)
+// If NTP not yet synced, returns false (treat as day — safe default)
+bool isNightTime() {
+  if (!isTimeReady()) return false;
+  time_t now = time(nullptr);
+  struct tm *t = localtime(&now);
+  int h = t->tm_hour;
+  return (h >= NIGHT_START_HOUR || h < DAY_START_HOUR);
+}
+
+// Returns formatted date+time string for Serial logs and HTTP reports
+String getDateTimeStr() {
+  if (!isTimeReady()) return "time-not-synced";
+  time_t now = time(nullptr);
+  struct tm *t = localtime(&now);
+  char buf[32];
+  strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", t);
+  return String(buf);
 }
 
 // ───────────────── SOLENOID VALVE ─────────────────
@@ -351,29 +413,41 @@ void onSlaveData(const uint8_t *mac, const uint8_t *data, int len) {
 }
 
 // Send valve command to a specific slave by index
-void sendValveCommand(int idx, bool valveOn, uint32_t valveMs) {
+// allow_water=false tells slave to suppress its own local emergency valve (night mode)
+void sendValveCommand(int idx, bool valveOn, uint32_t valveMs, bool allowWater = true) {
   if (idx < 0 || idx >= slaveCount) return;
   if (!slaves[idx].peer_registered) return;
 
   CommandPacket cmd;
+  memset(&cmd, 0, sizeof(cmd));
   strncpy(cmd.slave_id, slaves[idx].slave_id, 15);
-  cmd.valve_on = valveOn;
-  cmd.valve_ms = valveMs;
-  cmd.beep     = valveOn;
+  cmd.valve_on    = valveOn;
+  cmd.valve_ms    = valveMs;
+  cmd.beep        = valveOn;
+  cmd.allow_water = allowWater;
 
   esp_err_t res = esp_now_send(slaves[idx].mac, (uint8_t*)&cmd, sizeof(cmd));
-  Serial.printf("[ESPNOW] → %s valve=%s (%s)\n",
+  Serial.printf("[ESPNOW] → %s valve=%s allow_water=%s (%s)\n",
     cmd.slave_id, valveOn ? "OPEN" : "CLOSED",
+    allowWater ? "yes" : "NIGHT",
     res == ESP_OK ? "sent" : "error");
 }
 
-// Decide valve for each slave based on their moisture (local fallback when AI unavailable)
+// Every sensor cycle — send slaves the current day/night flag + open valve if needed
 void processSlaveCommands() {
+  bool dayMode = !isNightTime();
   for (int i = 0; i < slaveCount; i++) {
     if (!slaves[i].active) continue;
-    // If slave moisture is critical and hasn't had emergency already — use same threshold as slave
-    if (slaves[i].moisture_pct < MOISTURE_CRITICAL && !slaves[i].emergency_valve) {
-      sendValveCommand(i, true, VALVE_EMERGENCY_MS);
+    if (!dayMode) {
+      // Night: send heartbeat with allow_water=false so slave suppresses local emergency
+      sendValveCommand(i, false, 0, false);
+      Serial.printf("[NIGHT] → %s: no-water heartbeat sent\n", slaves[i].slave_id);
+    } else if (slaves[i].moisture_pct < MOISTURE_CRITICAL && !slaves[i].emergency_valve) {
+      // Day + critical moisture — open valve
+      sendValveCommand(i, true, VALVE_EMERGENCY_MS, true);
+    } else {
+      // Day + moisture OK — heartbeat with allow_water=true
+      sendValveCommand(i, false, 0, true);
     }
   }
 }
@@ -510,12 +584,14 @@ ReportResult res={false,5000,false,-1,false,false,"none","none"}; // valve=false
 // Wake Render first — avoids SSL timeout on cold start
 if(!wakeBackend()) return res;
 
-// Build URL with master sensor data + slaves JSON
+// Build URL with master sensor data + slaves JSON + datetime
 String slavesJson = buildSlavesJson();
+String dtStr = getDateTimeStr();
 String url=String(BACKEND_URL)+"/api/device-report?moisture="+String(moisture)
            +"&temperature="+String(tempC,2)
-           +"&slave_count="+String(slaveCount);
-Serial.printf("[HTTP] POST %s\n",url.c_str());
+           +"&slave_count="+String(slaveCount)
+           +"&datetime="+dtStr;
+Serial.printf("[HTTP] POST report at %s\n", dtStr.c_str());
 
 // Retry up to 3 times on send failure (-3 chunk error)
 for(int attempt=1; attempt<=3; attempt++){
@@ -633,11 +709,13 @@ if(wifiOK){
   initESPNOW();
   Serial.println("[SETUP] ESP-NOW ready — waiting for slave nodes...");
   Serial.println("[SETUP] ↑ Copy the MAC + Channel above into each slave's config");
+  syncNTP(); // sync IST time — enables night mode + datetime in reports
 }
 
 wifiOK?beepBoot():beepFail();
 
-Serial.println("[SETUP] Done — Master node online");
+Serial.printf("[SETUP] Done — %s | Day:%02dh–%02dh | Report every %dh\n",
+  getDateTimeStr().c_str(), DAY_START_HOUR, NIGHT_START_HOUR, CLOUD_REPORT_INTERVAL_H);
 }
 
 // ───────────────── LOOP ─────────────────
@@ -645,59 +723,80 @@ void loop(){
 
 esp_task_wdt_reset();
 
-int moisture=readMoisturePct();
-float tempC=readTemperatureC();
+unsigned long now = millis();
+bool night = isNightTime();
 
-Serial.printf("[READ] moisture=%d%% temp=%.1fC\n",moisture,tempC);
+// ── SENSOR CHECK (every 60s — runs day AND night) ─────────────────────────
+if(now - lastSensorMs >= SENSOR_INTERVAL_MS){
+  lastSensorMs = now;
 
-bool sensorsValid=(tempC>-100);
+  int moisture = readMoisturePct();
+  float tempC  = readTemperatureC();
+  bool sensorsValid = (tempC > -100);
 
-if(sensorsValid && moisture<MOISTURE_CRITICAL){
-  unsigned long now = millis();
-  if(now - lastEmergencyValveMs > VALVE_EMERGENCY_COOLDOWN_MS){
-    Serial.printf("[VALVE] Moisture critical (%d%%) — emergency valve OPEN\n", moisture);
-    valveRun(VALVE_EMERGENCY_MS); // silent — buzzer is reserved for animal detection only
-    lastEmergencyValveMs = now;
-  } else {
-    Serial.printf("[VALVE] Moisture critical (%d%%) — cooldown active, skipping\n", moisture);
+  Serial.printf("[READ] %s | moisture=%d%% temp=%.1fC | %s\n",
+    getDateTimeStr().c_str(), moisture, tempC, night ? "NIGHT-no watering" : "DAY");
+
+  // ── Emergency local valve — DAY ONLY ──
+  if(!night && sensorsValid && moisture < MOISTURE_CRITICAL){
+    if(now - lastEmergencyValveMs > VALVE_EMERGENCY_COOLDOWN_MS){
+      Serial.printf("[VALVE] Critical (%d%%) — emergency valve OPEN\n", moisture);
+      valveRun(VALVE_EMERGENCY_MS);
+      lastEmergencyValveMs = now;
+    } else {
+      Serial.printf("[VALVE] Critical (%d%%) — cooldown active, skipping\n", moisture);
+    }
+  } else if(night && sensorsValid && moisture < MOISTURE_CRITICAL){
+    Serial.printf("[NIGHT] Moisture critical (%d%%) — watering suppressed until %02dh\n",
+      moisture, DAY_START_HOUR);
+  }
+
+  // ── Slave heartbeat (day/night flag + emergency valve if needed) ──
+  if(slaveCount > 0){
+    Serial.printf("[SLAVES] %d zone(s) — %s\n", slaveCount, night ? "sending night flag" : "checking moisture");
+    processSlaveCommands();
+  }
+
+  // ── WiFi reconnect if dropped ──
+  if(WiFi.status() != WL_CONNECTED){
+    Serial.println("[WiFi] Reconnecting...");
+    WiFi.reconnect();
+    // Re-sync NTP after reconnect if time was lost
+    delay(3000); esp_task_wdt_reset();
+    if(WiFi.status() == WL_CONNECTED && !isTimeReady()) syncNTP();
   }
 }
 
-if(WiFi.status()==WL_CONNECTED){
+// ── CLOUD AI REPORT (every 3h — DAY ONLY) ────────────────────────────────
+bool cloudDue = (!firstCloudDone) || (now - lastCloudMs >= CLOUD_REPORT_INTERVAL_MS);
+if(!night && cloudDue && WiFi.status() == WL_CONNECTED){
+  lastCloudMs   = now;
+  firstCloudDone = true;
 
-ReportResult r=sendDeviceReport(moisture,tempC);
+  int moisture = readMoisturePct();
+  float tempC  = readTemperatureC();
+  bool sensorsValid = (tempC > -100);
 
-if(r.ok && r.valve && sensorsValid){
-  valveRun(r.duration_ms);
+  Serial.printf("[REPORT] AI report — %s\n", getDateTimeStr().c_str());
+  ReportResult r = sendDeviceReport(moisture, tempC);
+
+  // Valve command from AI — DAY only (double-check night didn't start during upload)
+  if(r.ok && r.valve && sensorsValid && !isNightTime()){
+    valveRun(r.duration_ms);
+  }
+
+  // Animal alert — day or night (camera+buzzer still works at night)
+  if(r.ok && r.animal_detected){
+    Serial.printf("[ANIMAL] %s detected (threat:%s)\n", r.animal_type, r.animal_threat);
+    int cycles = (strcmp(r.animal_threat,"high")==0) ? 5 :
+                 (strcmp(r.animal_threat,"low") ==0) ? 2 : 3;
+    beepAnimal(cycles);
+  }
+
+  Serial.printf("[NEXT] Next AI report in %dh\n", CLOUD_REPORT_INTERVAL_H);
 }
 
-// Animal detected — sound buzzer to scare it away
-if(r.ok && r.animal_detected){
-  Serial.printf("[ANIMAL] %s detected (threat:%s) — sounding buzzer\n",
-    r.animal_type, r.animal_threat);
-  // High threat = aggressive 5-cycle alarm, low = 2-cycle warning
-  int cycles = (strcmp(r.animal_threat,"high")==0) ? 5 :
-               (strcmp(r.animal_threat,"low") ==0) ? 2 : 3;
-  beepAnimal(cycles);
-}
-
-}else{
-
-Serial.println("[OFFLINE] WiFi lost");
-WiFi.reconnect();
-}
-
-// Process slave pump decisions (runs every cycle whether WiFi is up or not)
-if(slaveCount > 0){
-  Serial.printf("[SLAVES] %d zone(s) connected — checking commands\n", slaveCount);
-  processSlaveCommands();
-}
-
-Serial.printf("[WAIT] %ds\n",REPORT_INTERVAL_S);
-
-for(int i=0;i<REPORT_INTERVAL_S;i++){
-delay(1000);
+delay(500);
 esp_task_wdt_reset();
-}
 
 }
