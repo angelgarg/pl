@@ -32,11 +32,22 @@
 // ─────────────────────────────────────────────────────────────
 //  USER CONFIG — EDIT BEFORE FLASHING EACH SLAVE
 // ─────────────────────────────────────────────────────────────
-#define SLAVE_ID        "ZONE_01"       // ← unique per slave: ZONE_01, ZONE_02...
-#define ZONE_NAME       "Tomatoes"      // ← human label shown in dashboard
-#define ZONE_AREA_ACRES 1.0f            // ← land area of this zone in acres (1 acre ≈ 2.5 bigha in Haryana)
-#define WIFI_CHANNEL    1               // ← must match master's WiFi channel
-                                        //   (check Serial Monitor on master — prints channel on boot)
+//  ┌─ FIELD SETUP CHECKLIST ──────────────────────────────────┐
+//  │  □ 1. Set SLAVE_ID — unique per node (ZONE_01, ZONE_02…) │
+//  │  □ 2. Set ZONE_NAME — label shown on dashboard           │
+//  │  □ 3. Set ZONE_AREA_ACRES — plot size                    │
+//  │  □ 4. Boot master FIRST → copy MAC from Serial Monitor   │
+//  │        → paste into MASTER_MAC below                     │
+//  │  □ 5. Copy WIFI_CHANNEL from master Serial Monitor       │
+//  │        "[ESPNOW] WiFi Channel: X" → set WIFI_CHANNEL=X  │
+//  │  □ 6. Calibrate soil sensor (see SENSOR CALIBRATION)     │
+//  └──────────────────────────────────────────────────────────┘
+#define SLAVE_ID        "COLGARDEN_01"  // ← unique per slave: COLGARDEN_01, COLGARDEN_02...
+#define ZONE_NAME       "College Garden A"  // ← human label shown in dashboard
+#define ZONE_AREA_ACRES 0.05f           // ← plot size in acres (0.05 ≈ 200 sq.m — typical college garden bed)
+#define WIFI_CHANNEL    1               // ← MUST match master's WiFi channel
+                                        //   Boot master → Serial Monitor prints:
+                                        //   "[ESPNOW] WiFi Channel: X" → put X here
 
 // Master's MAC address — printed on master Serial Monitor at boot
 // Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
@@ -52,20 +63,25 @@ uint8_t MASTER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // ← REPLACE WITH
 
 // ─────────────────────────────────────────────────────────────
 //  SENSOR CALIBRATION
+//  HOW TO CALIBRATE OUTDOORS:
+//    1. Run firmware, open Serial Monitor
+//    2. Hold sensor in DRY air → note "[SOIL] raw=XXXX" → set SOIL_DRY_RAW
+//    3. Submerge sensor tip in water → note raw → set SOIL_WET_RAW
+//    4. Re-flash — outdoor soil ADC often differs from lab values
 // ─────────────────────────────────────────────────────────────
-#define SOIL_DRY_RAW    3800  // Raw ADC reading when sensor is dry in air
-#define SOIL_WET_RAW    1200  // Raw ADC reading when sensor is fully submerged
+#define SOIL_DRY_RAW    3800  // Raw ADC in dry air  (re-calibrate outdoors!)
+#define SOIL_WET_RAW    1200  // Raw ADC fully wet   (re-calibrate outdoors!)
 
 // ─────────────────────────────────────────────────────────────
-//  THRESHOLDS
+//  THRESHOLDS  (tuned for outdoor garden soil)
 // ─────────────────────────────────────────────────────────────
-#define MOISTURE_CRITICAL   20   // % — auto-water immediately if below this
-#define PUMP_EMERGENCY_MS   6000 // ms — emergency pump duration
+#define MOISTURE_CRITICAL   25   // % — emergency local valve opens immediately below this
+#define VALVE_EMERGENCY_MS  12000 // ms — 12s valve open per emergency cycle (garden plot)
 
 // ─────────────────────────────────────────────────────────────
 //  TIMING
 // ─────────────────────────────────────────────────────────────
-#define REPORT_INTERVAL_S   30   // seconds between sensor reads + ESP-NOW sends
+#define REPORT_INTERVAL_S   60   // seconds between sensor reads + ESP-NOW sends (60s = stable on college WiFi)
 #define MASTER_TIMEOUT_MS   5000 // ms to wait for master ACK/command after send
 
 // ─────────────────────────────────────────────────────────────
@@ -306,7 +322,7 @@ void loop() {
   if (moisture < MOISTURE_CRITICAL) {
     Serial.println("[SLAVE] CRITICAL moisture — local emergency valve OPEN");
     beepAlert();
-    valveRun(PUMP_EMERGENCY_MS);
+    valveRun(VALVE_EMERGENCY_MS);
     emergencyRan = true;
   }
 

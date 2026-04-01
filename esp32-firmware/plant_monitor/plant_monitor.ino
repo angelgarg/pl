@@ -90,23 +90,33 @@ int slaveCount = 0;
 portMUX_TYPE slaveMux = portMUX_INITIALIZER_UNLOCKED;
 
 // ───────────────── USER CONFIG (EDIT THESE BEFORE FLASHING) ─────────────────
+//  ┌─ FIELD SETUP CHECKLIST ─────────────────────────────────────────────────┐
+//  │  □ 1. Verify WiFi networks below (college + mobile hotspot fallback)    │
+//  │  □ 2. BACKEND_URL and DEVICE_KEY already set — no changes needed        │
+//  │  □ 3. Flash master FIRST — note from Serial Monitor:                    │
+//  │        "Master MAC: XX:XX:XX:XX:XX:XX" → paste into slave MASTER_MAC   │
+//  │        "[ESPNOW] WiFi Channel: X"       → paste into slave WIFI_CHANNEL │
+//  │  □ 4. Then flash slave(s) with correct MASTER_MAC + WIFI_CHANNEL        │
+//  │  □ 5. Power both — slave beeps 2× on success                           │
+//  │  □ 6. Watch Serial Monitor: master should print slave zone data         │
+//  └─────────────────────────────────────────────────────────────────────────┘
 // Add / remove networks below — device auto-picks strongest available
 WiFiMulti wifiMulti;
 void setupWiFiNetworks() {
-  wifiMulti.addAP("CILP_Open",  "cilp@tiet#b122");   // college
-  wifiMulti.addAP("Tiuu",       "12345678");          // home
-  // wifiMulti.addAP("FarmHotspot", "password");      // ← add more here
+  wifiMulti.addAP("CILP_Open",  "cilp@tiet#b122");   // college garden WiFi
+  wifiMulti.addAP("Tiuu",       "12345678");          // backup: home
+  // wifiMulti.addAP("MyHotspot", "password");        // ← add mobile hotspot as field fallback
 }
 
 #define BACKEND_URL  "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
 #define DEVICE_KEY   "piq-1D7ADC-E53119"             // ← from BhoomiIQ dashboard
 
-#define REPORT_INTERVAL_S 30
+#define REPORT_INTERVAL_S 60             // 60s — stable on college WiFi, reduces reconnects
 
-#define MOISTURE_CRITICAL 20
-#define MOISTURE_DRY 30
-#define VALVE_EMERGENCY_MS 8000            // ms to open valve during local emergency
-#define VALVE_EMERGENCY_COOLDOWN_MS 120000 // 2 min cooldown — stops repeated emergency openings
+#define MOISTURE_CRITICAL 25             // % — emergency valve fires immediately (outdoor garden soil)
+#define MOISTURE_DRY      40             // % — "dry" warning level for AI report
+#define VALVE_EMERGENCY_MS       12000   // ms — 12s valve open per emergency (garden plot size)
+#define VALVE_EMERGENCY_COOLDOWN_MS 300000 // 5 min cooldown — prevents over-watering outdoor garden
 
 // ── RELAY TYPE — change if valve behaviour is inverted ──
 // true  = active LOW relay  (LOW=ON, HIGH=OFF) — most common blue relay modules
@@ -136,8 +146,12 @@ void setupWiFiNetworks() {
 #define CAM_HREF_PIN 7
 #define CAM_PCLK_PIN 13
 
-#define SOIL_DRY_RAW 4000
-#define SOIL_WET_RAW 1100
+// Soil calibration — re-calibrate outdoors if readings look wrong:
+//   Open Serial Monitor → "[SOIL] raw=XXXX" →
+//   Hold sensor in dry air → set SOIL_DRY_RAW to that value
+//   Dip sensor in water   → set SOIL_WET_RAW to that value
+#define SOIL_DRY_RAW 4000   // ADC reading in dry air
+#define SOIL_WET_RAW 1100   // ADC reading fully wet
 
 // ───────────────── GLOBALS ─────────────────
 OneWire oneWire(DS18B20_PIN);
@@ -351,13 +365,13 @@ void sendValveCommand(int idx, bool valveOn, uint32_t valveMs) {
     res == ESP_OK ? "sent" : "error");
 }
 
-// Decide valve for each slave based on their moisture (local fallback)
+// Decide valve for each slave based on their moisture (local fallback when AI unavailable)
 void processSlaveCommands() {
   for (int i = 0; i < slaveCount; i++) {
     if (!slaves[i].active) continue;
-    // If slave moisture is critical and hasn't had emergency already
-    if (slaves[i].moisture_pct < 25 && !slaves[i].emergency_valve) {
-      sendValveCommand(i, true, 6000);
+    // If slave moisture is critical and hasn't had emergency already — use same threshold as slave
+    if (slaves[i].moisture_pct < MOISTURE_CRITICAL && !slaves[i].emergency_valve) {
+      sendValveCommand(i, true, VALVE_EMERGENCY_MS);
     }
   }
 }
