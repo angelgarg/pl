@@ -3,19 +3,40 @@ import PlantCard from '../components/PlantCard';
 import * as api from '../api';
 import { useLang } from '../LangContext';
 
+// ── IST helpers ──────────────────────────────────────────────
+function getISTNow() {
+  return new Date(Date.now() + 5.5 * 60 * 60 * 1000);
+}
+function getDesiGreeting() {
+  const h = getISTNow().getUTCHours();
+  if (h >= 5  && h < 12) return { hi: 'सुप्रभात',   en: 'Good Morning',   emoji: '🌄' };
+  if (h >= 12 && h < 17) return { hi: 'नमस्ते',     en: 'Good Afternoon', emoji: '☀️' };
+  if (h >= 17 && h < 21) return { hi: 'शुभ संध्या', en: 'Good Evening',   emoji: '🌇' };
+  return                         { hi: 'शुभ रात्रि', en: 'Good Night',     emoji: '🌙' };
+}
+function getISTDateStr() {
+  const d = getISTNow();
+  const days   = ['Ravivar','Somvar','Mangalvar','Budhvar','Guruvar','Shukravar','Shanivar'];
+  const months = ['January','February','March','April','May','June',
+                  'July','August','September','October','November','December'];
+  return `${days[d.getUTCDay()]}, ${d.getUTCDate()} ${months[d.getUTCMonth()]} ${d.getUTCFullYear()}`;
+}
+
 export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, isGuest }) {
   const { t } = useLang();
-  const [plants, setPlants] = useState([]);
-  const [stats, setStats] = useState(null);
-  const [deviceData, setDeviceData] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
+  const [plants, setPlants]                   = useState([]);
+  const [stats, setStats]                     = useState(null);
+  const [deviceData, setDeviceData]           = useState(null);
+  const [loading, setLoading]                 = useState(true);
+  const [error, setError]                     = useState('');
   const [animalDismissed, setAnimalDismissed] = useState(false);
+  const [currentTime, setCurrentTime]         = useState(getISTNow());
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30000);
-    return () => clearInterval(interval);
+    const dataInterval  = setInterval(fetchData, 30000);
+    const clockInterval = setInterval(() => setCurrentTime(getISTNow()), 60000);
+    return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
   }, []);
 
   const fetchData = async () => {
@@ -24,13 +45,12 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, is
       const [plantsData, statsData, deviceLatest] = await Promise.all([
         api.getPlants(),
         api.getDashboard(),
-        api.getDeviceLatest().catch(() => null)   // non-fatal if device never reported
+        api.getDeviceLatest().catch(() => null)
       ]);
       setPlants(plantsData);
       setStats(statsData);
       if (deviceLatest) {
         setDeviceData(deviceLatest);
-        // Reset dismiss when a new animal is detected
         if (deviceLatest.ai_animal_detected) setAnimalDismissed(false);
       }
     } catch (err) {
@@ -40,12 +60,14 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, is
     }
   };
 
+  const greeting = getDesiGreeting();
+
   if (loading) {
     return (
       <div className="page">
         <div className="loading-skeleton">
-          <div className="loading-skeleton-item" style={{ height: '80px', marginBottom: '20px' }} />
-          <div className="loading-skeleton-item" style={{ height: '200px', marginBottom: '20px' }} />
+          <div className="loading-skeleton-item" style={{ height: '120px', marginBottom: '20px', borderRadius: '20px' }} />
+          <div className="loading-skeleton-item" style={{ height: '180px', marginBottom: '20px' }} />
           <div className="loading-skeleton-item" style={{ height: '200px' }} />
         </div>
       </div>
@@ -54,122 +76,145 @@ export default function Dashboard({ onNavigateToPlant, onAddNote, onAddPlant, is
 
   return (
     <div className="page">
+
+      {/* ── Desi Hero Banner ── */}
+      <div className="dash-hero">
+        <div className="dash-hero-left">
+          <div className="dash-hero-greeting">
+            <span className="dash-hero-emoji">{greeting.emoji}</span>
+            <div>
+              <div className="dash-hi-text">{greeting.hi} 🙏</div>
+              <div className="dash-en-text">{greeting.en}, Kisan Ji!</div>
+            </div>
+          </div>
+          <div className="dash-date-row">
+            <span className="dash-date-badge">📅 {getISTDateStr()}</span>
+            <span className="dash-date-badge dash-ist-badge">
+              🕐 {currentTime.getUTCHours().toString().padStart(2,'0')}:{currentTime.getUTCMinutes().toString().padStart(2,'0')} IST
+            </span>
+          </div>
+          <div className="dash-tagline">भूमि की देखभाल, AI के साथ 🌿</div>
+        </div>
+        <div className="dash-hero-right">
+          {!isGuest && (
+            <button className="dash-add-btn" onClick={onAddPlant}>
+              + नया पौधा
+            </button>
+          )}
+          <div className="dash-hero-motif">🌾🪴🌻</div>
+        </div>
+      </div>
+
+      {/* ── Guest Notice ── */}
       {isGuest && (
         <div className="guest-readonly-notice">
-          👀 You're in guest mode — browsing demo data. <strong style={{marginLeft:4}}>Create an account</strong> to add your own plants.
+          👋 Mehmaan mode mein hain aap — demo data dekh rahe hain.{' '}
+          <strong style={{ marginLeft: 4 }}>Account banao</strong> apne paudhe track karne ke liye.
         </div>
       )}
-      <div className="page-header">
-        <div>
-          <h1 className="page-title">{t('dashboardTitle')}</h1>
-          <p className="page-subtitle">{t('dashboardSubtitle')}</p>
-        </div>
-        {!isGuest && (
-          <button className="btn-add-plant" onClick={onAddPlant}>
-            + Add Plant
-          </button>
-        )}
-      </div>
 
       {error && <div className="error-message">{error}</div>}
 
-      {/* ── Animal Detection Alert Banner ── */}
+      {/* ── Animal Detection Alert ── */}
       {deviceData?.ai_animal_detected && !animalDismissed && (
-        <div style={{
-          background: 'linear-gradient(135deg, #2a0808, #1a0505)',
-          border: '1.5px solid #EF4444',
-          borderRadius: '10px',
-          padding: '14px 18px',
-          marginBottom: '18px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: '12px',
-          boxShadow: '0 0 18px rgba(239,68,68,0.25)'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <span style={{ fontSize: '26px' }}>⚠️</span>
+        <div className="dash-animal-alert">
+          <div className="dash-animal-left">
+            <span className="dash-animal-icon">⚠️</span>
             <div>
-              <div style={{ color: '#EF4444', fontWeight: 700, fontSize: '15px', marginBottom: '2px' }}>
-                Animal Detected — Buzzer Triggered
-              </div>
-              <div style={{ color: '#ffaaaa', fontSize: '13px' }}>
+              <div className="dash-animal-title">जानवर दिखा! — Buzzer बज गया 🔔</div>
+              <div className="dash-animal-sub">
                 <strong style={{ textTransform: 'capitalize' }}>
-                  {deviceData.ai_animal_type !== 'none' ? deviceData.ai_animal_type : 'Unknown animal'}
+                  {deviceData.ai_animal_type !== 'none' ? deviceData.ai_animal_type : 'Koi jaanvar'}
                 </strong>
-                {' '}spotted near your plants
+                {' '}aapke paudho ke paas aaya
                 {deviceData.ai_animal_threat && deviceData.ai_animal_threat !== 'none' && (
-                  <span style={{
-                    marginLeft: '8px',
-                    background: deviceData.ai_animal_threat === 'high' ? '#7a1010' : '#5a2a10',
-                    color: deviceData.ai_animal_threat === 'high' ? '#ff8888' : '#ffbb88',
-                    borderRadius: '4px', padding: '1px 7px', fontSize: '11px', fontWeight: 600
-                  }}>
+                  <span className={`dash-threat-pill dash-threat-${deviceData.ai_animal_threat}`}>
                     {deviceData.ai_animal_threat.toUpperCase()} THREAT
                   </span>
                 )}
-                <span style={{ color: '#7a4a4a', marginLeft: '10px', fontSize: '11px' }}>
-                  {deviceData.created_at ? new Date(deviceData.created_at).toLocaleTimeString() : ''}
+                <span className="dash-animal-time">
+                  {deviceData.created_at ? new Date(deviceData.created_at).toLocaleTimeString('en-IN') : ''}
                 </span>
               </div>
             </div>
           </div>
-          <button
-            onClick={() => setAnimalDismissed(true)}
-            style={{
-              background: 'none', border: '1px solid #7a3a3a', borderRadius: '6px',
-              color: '#EF4444', padding: '4px 12px', cursor: 'pointer', fontSize: '12px',
-              whiteSpace: 'nowrap'
-            }}
-          >
-            Dismiss
+          <button className="dash-dismiss-btn" onClick={() => setAnimalDismissed(true)}>
+            Theek Hai ✓
           </button>
         </div>
       )}
 
+      {/* ── Stats — Fasal ki Jaankari ── */}
       {stats && (
-        <div className="dashboard-stats">
-          <div className="stat-card">
-            <div className="stat-value">{stats.totalPlants}</div>
-            <div className="stat-label">{t('totalPlants')}</div>
+        <>
+          <div className="dash-section-head">
+            <span className="dash-section-line" />
+            <span className="dash-section-label">🌾 Fasal ki Jaankari</span>
+            <span className="dash-section-line" />
           </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--success)' }}>{stats.healthyCount}</div>
-            <div className="stat-label">{t('healthy')}</div>
+          <div className="dashboard-stats">
+            <div className="stat-card stat-card-desi stat-green">
+              <div className="stat-desi-icon">🌿</div>
+              <div className="stat-value">{stats.totalPlants}</div>
+              <div className="stat-label">Kul Paudhe</div>
+              <div className="stat-sublabel">Total Plants</div>
+            </div>
+            <div className="stat-card stat-card-desi stat-emerald">
+              <div className="stat-desi-icon">💚</div>
+              <div className="stat-value" style={{ color: 'var(--success)' }}>{stats.healthyCount}</div>
+              <div className="stat-label">Swasth</div>
+              <div className="stat-sublabel">Healthy</div>
+            </div>
+            <div className="stat-card stat-card-desi stat-saffron">
+              <div className="stat-desi-icon">⚠️</div>
+              <div className="stat-value" style={{ color: '#E68A00' }}>{stats.alertCount}</div>
+              <div className="stat-label">Dhyan Do</div>
+              <div className="stat-sublabel">Needs Attention</div>
+            </div>
+            <div className="stat-card stat-card-desi stat-blue">
+              <div className="stat-desi-icon">📊</div>
+              <div className="stat-value" style={{ color: 'var(--primary-light)' }}>{stats.avgHealthScore}%</div>
+              <div className="stat-label">Sehat Score</div>
+              <div className="stat-sublabel">Avg Health</div>
+            </div>
           </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--danger)' }}>{stats.alertCount}</div>
-            <div className="stat-label">{t('needsAttention')}</div>
-          </div>
-          <div className="stat-card">
-            <div className="stat-value" style={{ color: 'var(--primary-light)' }}>{stats.avgHealthScore}%</div>
-            <div className="stat-label">{t('avgHealth')}</div>
-          </div>
-        </div>
+        </>
       )}
 
+      {/* ── Plant Grid ── */}
       {plants.length === 0 ? (
         <div className="empty-state">
           <div className="empty-state-emoji">🌱</div>
-          <h2 className="empty-state-title">{t('noPlantsTitle')}</h2>
-          <p className="empty-state-subtitle">{t('noPlantsText')}</p>
+          <h2 className="empty-state-title">Abhi koi paudha nahi hai</h2>
+          <p className="empty-state-subtitle">
+            Ek beej lagao, ek sapna ugao 🌾
+            <br />
+            <span style={{ fontSize: '13px', opacity: 0.7 }}>Add your first plant to get started</span>
+          </p>
           {!isGuest && (
             <button className="empty-state-btn" onClick={onAddPlant}>
-              {t('addFirstPlant')}
+              + Pehla Paudha Lagao
             </button>
           )}
         </div>
       ) : (
-        <div className="plant-grid">
-          {plants.map(plant => (
-            <PlantCard
-              key={plant.id}
-              plant={plant}
-              onViewDetails={() => onNavigateToPlant(plant.id)}
-              onAddNote={() => onAddNote(plant.id)}
-            />
-          ))}
-        </div>
+        <>
+          <div className="dash-section-head" style={{ marginTop: '8px' }}>
+            <span className="dash-section-line" />
+            <span className="dash-section-label">🪴 Aapke Paudhe ({plants.length})</span>
+            <span className="dash-section-line" />
+          </div>
+          <div className="plant-grid">
+            {plants.map(plant => (
+              <PlantCard
+                key={plant.id}
+                plant={plant}
+                onViewDetails={() => onNavigateToPlant(plant.id)}
+                onAddNote={() => onAddNote(plant.id)}
+              />
+            ))}
+          </div>
+        </>
       )}
     </div>
   );

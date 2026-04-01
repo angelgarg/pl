@@ -1494,6 +1494,301 @@ input:focus, select:focus, textarea:focus {
   color: #f59e0b;
 }
 
+/* ============================================================
+   DESI DASHBOARD — BhoomiIQ Indian Touch 🌾
+   Saffron + Earthy Green palette, Hindi greetings, kheti vibes
+   ============================================================ */
+
+/* Hero Banner */
+.dash-hero {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  background: linear-gradient(135deg, #1a3d2b 0%, #0f2a1c 50%, #1a2a0d 100%);
+  border: 1px solid rgba(180, 140, 40, 0.3);
+  border-radius: 20px;
+  padding: 24px 28px;
+  margin-bottom: 24px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.25);
+}
+
+/* Saffron left accent bar */
+.dash-hero::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  background: linear-gradient(180deg, #FF8C00, #FFB300, #FF8C00);
+  border-radius: 20px 0 0 20px;
+}
+
+/* Subtle diagonal texture */
+.dash-hero::after {
+  content: '';
+  position: absolute;
+  right: -30px; top: -30px;
+  width: 200px; height: 200px;
+  background: radial-gradient(circle, rgba(255,180,0,0.06) 0%, transparent 70%);
+  pointer-events: none;
+}
+
+.dash-hero-left {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dash-hero-greeting {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.dash-hero-emoji {
+  font-size: 40px;
+  line-height: 1;
+  filter: drop-shadow(0 2px 6px rgba(255,180,0,0.4));
+}
+
+.dash-hi-text {
+  font-size: 26px;
+  font-weight: 800;
+  color: #FFB300;
+  letter-spacing: 0.5px;
+  text-shadow: 0 1px 8px rgba(255,180,0,0.3);
+  font-family: 'Segoe UI', 'Noto Sans Devanagari', sans-serif;
+}
+
+.dash-en-text {
+  font-size: 14px;
+  color: rgba(255,255,255,0.65);
+  font-weight: 500;
+  margin-top: 2px;
+}
+
+.dash-date-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.dash-date-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: rgba(255,255,255,0.07);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 20px;
+  padding: 4px 12px;
+  font-size: 12px;
+  color: rgba(255,255,255,0.75);
+  font-weight: 500;
+}
+
+.dash-ist-badge {
+  background: rgba(255,140,0,0.12);
+  border-color: rgba(255,140,0,0.3);
+  color: #FFB300;
+}
+
+.dash-tagline {
+  font-size: 12px;
+  color: rgba(255,255,255,0.4);
+  font-style: italic;
+  font-family: 'Segoe UI', 'Noto Sans Devanagari', sans-serif;
+}
+
+.dash-hero-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+.dash-add-btn {
+  background: linear-gradient(135deg, #FF8C00, #E67E00);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  padding: 10px 20px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  box-shadow: 0 3px 12px rgba(255,140,0,0.35);
+  white-space: nowrap;
+  font-family: 'Segoe UI', 'Noto Sans Devanagari', sans-serif;
+}
+.dash-add-btn:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(255,140,0,0.5);
+  background: linear-gradient(135deg, #FFA020, #FF8C00);
+}
+
+.dash-hero-motif {
+  font-size: 22px;
+  letter-spacing: 3px;
+  opacity: 0.55;
+  filter: drop-shadow(0 1px 4px rgba(255,200,0,0.2));
+}
+
+/* Section Divider — Rangoli style */
+.dash-section-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 20px 0 16px;
+}
+
+.dash-section-line {
+  flex: 1;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,180,0,0.25), transparent);
+}
+
+.dash-section-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: rgba(180,140,40,0.9);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: rgba(255,180,0,0.07);
+  padding: 4px 12px;
+  border-radius: 20px;
+  border: 1px solid rgba(255,180,0,0.15);
+}
+
+/* Desi Stat Cards */
+.stat-card-desi {
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s, box-shadow 0.2s;
+  border-top: 3px solid transparent;
+}
+.stat-card-desi:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+
+.stat-card-desi.stat-green  { border-top-color: #22c55e; }
+.stat-card-desi.stat-emerald { border-top-color: #10b981; }
+.stat-card-desi.stat-saffron { border-top-color: #FF8C00; }
+.stat-card-desi.stat-blue   { border-top-color: #3b82f6; }
+
+.stat-desi-icon {
+  font-size: 28px;
+  margin-bottom: 8px;
+  display: block;
+}
+
+.stat-sublabel {
+  font-size: 10px;
+  color: var(--text-secondary);
+  opacity: 0.6;
+  margin-top: 2px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Animal Alert — Desi Style */
+.dash-animal-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: linear-gradient(135deg, #2a0808, #1a0505);
+  border: 1.5px solid #EF4444;
+  border-left: 4px solid #EF4444;
+  border-radius: 12px;
+  padding: 14px 18px;
+  margin-bottom: 18px;
+  box-shadow: 0 0 20px rgba(239,68,68,0.2);
+}
+
+.dash-animal-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.dash-animal-icon {
+  font-size: 26px;
+  animation: alertPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes alertPulse {
+  0%, 100% { transform: scale(1); }
+  50%       { transform: scale(1.15); }
+}
+
+.dash-animal-title {
+  color: #EF4444;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 3px;
+  font-family: 'Segoe UI', 'Noto Sans Devanagari', sans-serif;
+}
+
+.dash-animal-sub {
+  color: #ffaaaa;
+  font-size: 13px;
+}
+
+.dash-animal-time {
+  color: #7a4a4a;
+  margin-left: 10px;
+  font-size: 11px;
+}
+
+.dash-threat-pill {
+  margin-left: 8px;
+  border-radius: 4px;
+  padding: 1px 7px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.dash-threat-high   { background: #7a1010; color: #ff8888; }
+.dash-threat-medium { background: #5a2a10; color: #ffbb88; }
+.dash-threat-low    { background: #3a3a10; color: #ffee88; }
+
+.dash-dismiss-btn {
+  background: none;
+  border: 1px solid #7a3a3a;
+  border-radius: 8px;
+  color: #EF4444;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.dash-dismiss-btn:hover {
+  background: rgba(239,68,68,0.1);
+}
+
+/* Mobile responsiveness */
+@media (max-width: 600px) {
+  .dash-hero {
+    flex-direction: column;
+    gap: 16px;
+    padding: 20px;
+  }
+  .dash-hero-right {
+    flex-direction: row;
+    align-items: center;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .dash-hi-text { font-size: 22px; }
+  .dash-hero-emoji { font-size: 32px; }
+}
+
 /* Read-only notice shown in pages when guest */
 .guest-readonly-notice {
   display: flex;
