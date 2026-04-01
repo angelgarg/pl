@@ -162,10 +162,18 @@ Return ONLY valid JSON (no markdown):
 }
 
 // Legacy: analyzeImage (used by multi-plant pages)
+// Accepts: file path, "data:<mime>;base64,<data>" URI, or plain base64 string
 async function analyzeImage(imagePath, plantName = '', sensorData = {}) {
   try {
-    if (!fs.existsSync(imagePath)) return null;
-    const base64Image = fs.readFileSync(imagePath).toString('base64');
+    let base64Image;
+    if (imagePath && imagePath.startsWith('data:')) {
+      // Data URI — strip the prefix
+      base64Image = imagePath.split(',')[1];
+    } else if (imagePath && fs.existsSync(imagePath)) {
+      base64Image = fs.readFileSync(imagePath).toString('base64');
+    } else {
+      return null;
+    }
     const result = await analyzeDeviceReport(base64Image, {
       moisture_pct:  sensorData.moisture    || 50,
       temperature_c: sensorData.temperature || 22

@@ -14,6 +14,7 @@ const { generateDailyContent } = require('./socialContent');
 const { startAutoPoster, runDailyPost } = require('./autoPoster');
 const { saveZoneReading, getLatestZones, getDailyReport, runDailyReport, startDailyReportScheduler } = require('./dailyReport');
 const { updateFarmData, getFarmStatus, getAllFarmDevices, generatePumpCommands } = require('./slaveManager');
+const cloudinary = require('./cloudinary');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -67,16 +68,9 @@ if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, uploadsDir);
-  },
-  filename: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
-    const name = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
-    cb(null, name);
-  }
-});
+// Use memory storage so we have the Buffer available for Cloudinary upload.
+// Local disk fallback still used when Cloudinary is not configured.
+const storage = multer.memoryStorage();
 
 const upload = multer({
   storage,
@@ -90,6 +84,20 @@ const upload = multer({
     }
   }
 });
+
+// Helper: save uploaded file buffer — tries Cloudinary first, falls back to disk
+async function saveUploadedImage(fileBuffer, originalName, folder = 'bhoomiq/plants') {
+  // Try Cloudinary
+  const cloudUrl = await cloudinary.uploadImage(fileBuffer, { folder });
+  if (cloudUrl) return { path: cloudUrl, isCloud: true };
+
+  // Disk fallback
+  const ext  = path.extname(originalName || '.jpg');
+  const name = `${Date.now()}-${crypto.randomBytes(8).toString('hex')}${ext}`;
+  const fullPath = path.join(uploadsDir, name);
+  fs.writeFileSync(fullPath, fileBuffer);
+  return { path: `/uploads/${name}`, isCloud: false };
+}
 
 // Serve uploads directory
 app.use('/uploads', express.static(uploadsDir));
@@ -639,18 +647,12 @@ app.post('/api/plants/:id/readings', requireAuth, upload.single('image'), async 
     const plant = db.findPlantById(req.params.id);
 
     if (!plant || plant.user_id !== req.user.id) {
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
       return res.status(404).json({ error: 'Plant not found' });
     }
 
     const { temperature, humidity, soil_moisture } = req.body;
 
     if (temperature === undefined || humidity === undefined || soil_moisture === undefined) {
-      if (req.file) {
-        fs.unlinkSync(req.file.path);
-      }
       return res.status(400).json({ error: 'Temperature, humidity, and soil_moisture required' });
     }
 
@@ -664,9 +666,12 @@ app.post('/api/plants/:id/readings', requireAuth, upload.single('image'), async 
     let imagePath = null;
 
     if (req.file) {
-      imagePath = `/uploads/${req.file.filename}`;
-      // Try to analyze with OpenAI
-      aiAnalysis = await analyzeImage(req.file.path, plant.name, sensorData);
+      // Save image (Cloudinary → disk fallback)
+      const saved = await saveUploadedImage(req.file.buffer, req.file.originalname, 'bhoomiq/plants');
+      imagePath = saved.path;
+      // Analyze using base64 (memory storage — no disk path available)
+      const base64 = req.file.buffer.toString('base64');
+      aiAnalysis = await analyzeImage(`data:${req.file.mimetype};base64,${base64}`, plant.name, sensorData);
     }
 
     // Calculate health score
@@ -750,7 +755,9 @@ app.post('/api/plants/:id/upload-image', requireAuth, upload.single('image'), as
       return res.status(400).json({ error: 'No image provided' });
     }
 
-    const imagePath = `/uploads/${req.file.filename}`;
+    // Save to Cloudinary (or disk fallback)
+    const saved = await saveUploadedImage(req.file.buffer, req.file.originalname, 'bhoomiq/plants');
+    const imagePath = saved.path;
 
     // Get latest sensor data for analysis context
     const readings = db.getReadingsByPlantId(req.params.id, 1);
@@ -760,8 +767,9 @@ app.post('/api/plants/:id/upload-image', requireAuth, upload.single('image'), as
       humidity: readings[0].humidity
     } : { moisture: 50, temperature: 22, humidity: 55 };
 
-    // Analyze with AI
-    const aiAnalysis = await analyzeImage(req.file.path, plant.name, sensorData);
+    // Analyze with AI using base64 from memory buffer
+    const base64 = req.file.buffer.toString('base64');
+    const aiAnalysis = await analyzeImage(`data:${req.file.mimetype};base64,${base64}`, plant.name, sensorData);
 
     res.json({
       imagePath,
@@ -799,12 +807,24 @@ app.post('/api/plants/:id/analyze', requireAuth, async (req, res) => {
       humidity: readings[0].humidity
     } : { moisture: 50, temperature: 22, humidity: 55 };
 
-    // Full file path for analysis
-    const fullPath = imagePath.startsWith('/uploads/') ?
-      path.join(__dirname, 'uploads', path.basename(imagePath)) :
-      imagePath;
+    // If imagePath is a Cloudinary URL, fetch it for analysis
+    // If it's a local /uploads/ path, resolve to disk path
+    let analysisInput = imagePath;
+    if (imagePath.startsWith('https://res.cloudinary.com')) {
+      // Fetch from Cloudinary and convert to base64
+      try {
+        const fetch = require('node-fetch');
+        const r = await fetch(imagePath);
+        const buf = await r.buffer();
+        analysisInput = `data:image/jpeg;base64,${buf.toString('base64')}`;
+      } catch (_) {
+        analysisInput = imagePath; // pass URL as-is — analyzeImage will handle gracefully
+      }
+    } else if (imagePath.startsWith('/uploads/')) {
+      analysisInput = path.join(__dirname, 'uploads', path.basename(imagePath));
+    }
 
-    const analysis = await analyzeImage(fullPath, plant.name, sensorData);
+    const analysis = await analyzeImage(analysisInput, plant.name, sensorData);
 
     res.json({ analysis });
   } catch (err) {
@@ -1042,20 +1062,34 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
   let image_path = null;
   let imageBase64 = null;
   if (imgBuffer.length > 1000) {   // >1KB means we got a real image
-    const filename = `device_${Date.now()}.jpg`;
-    const fullPath = path.join(uploadsDir, filename);
-    fs.writeFileSync(fullPath, imgBuffer);
-    image_path = `/uploads/${filename}`;
     imageBase64 = imgBuffer.toString('base64');
 
-    // Prune old device images (keep newest 200)
-    try {
-      const files = fs.readdirSync(uploadsDir)
-        .filter(f => f.startsWith('device_'))
-        .map(f => ({ name: f, mtime: fs.statSync(path.join(uploadsDir, f)).mtimeMs }))
-        .sort((a, b) => b.mtime - a.mtime);
-      files.slice(200).forEach(f => fs.unlinkSync(path.join(uploadsDir, f.name)));
-    } catch (_) {}
+    // Try Cloudinary first — permanent, survives Render redeploys
+    const deviceKey = req.headers['x-device-key'] || 'unknown';
+    const cloudUrl = await cloudinary.uploadImage(imgBuffer, {
+      folder:   `bhoomiq/devices/${deviceKey}`,
+      publicId: `latest_${deviceKey}`,  // always overwrites same ID — saves storage
+      overwrite: true
+    });
+
+    if (cloudUrl) {
+      image_path = cloudUrl;  // permanent Cloudinary URL
+    } else {
+      // Fallback: local disk (will be lost on Render redeploy, but better than nothing)
+      const filename = `device_${Date.now()}.jpg`;
+      const fullPath = path.join(uploadsDir, filename);
+      fs.writeFileSync(fullPath, imgBuffer);
+      image_path = `/uploads/${filename}`;
+
+      // Prune old local device images (keep newest 50 when using fallback)
+      try {
+        const files = fs.readdirSync(uploadsDir)
+          .filter(f => f.startsWith('device_'))
+          .map(f => ({ name: f, mtime: fs.statSync(path.join(uploadsDir, f)).mtimeMs }))
+          .sort((a, b) => b.mtime - a.mtime);
+        files.slice(50).forEach(f => { try { fs.unlinkSync(path.join(uploadsDir, f.name)); } catch(_){} });
+      } catch (_) {}
+    }
   }
 
   // AI analysis (with image if available, else sensor-only fallback)
