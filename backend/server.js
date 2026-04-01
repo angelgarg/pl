@@ -159,6 +159,24 @@ function optionalAuthCheck(req, res, next) {
   next();
 }
 
+// ─── IST (Indian Standard Time = UTC+5:30) helpers ───────────────────────────
+// Render runs in UTC — use these for any date/time shown to users or in logs
+const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // 19800000 ms
+
+function getISTDate() {
+  return new Date(Date.now() + IST_OFFSET_MS);
+}
+
+// Returns "YYYY-MM-DD HH:MM:SS IST"
+function getISTString() {
+  const d = getISTDate();
+  return d.toISOString().replace('T', ' ').slice(0, 19) + ' IST';
+}
+
+// Returns date string in IST (for daily cache keys, report dates)
+function getISTDateString() {
+  return getISTDate().toDateString(); // e.g. "Thu Apr 03 2026"
+}
 // ─── Simple in-memory rate limiter (no external package needed) ──
 const _rlStore = new Map();
 function makeRateLimit(maxRequests, windowMs) {
@@ -1095,9 +1113,9 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     ? manualCmd.duration
     : (aiResult.pump_duration_seconds || 7) * 1000;
 
-  // Update device last_seen_at (for registered devices)
+  // Update device last_seen_at in IST
   if (req.deviceRecord) {
-    db.updateDevice(req.deviceRecord.id, { last_seen_at: new Date().toISOString(), is_active: true });
+    db.updateDevice(req.deviceRecord.id, { last_seen_at: getISTString(), is_active: true });
   }
 
   // Save to DB
@@ -1137,7 +1155,8 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     buzzer,
     animal_detected:  aiResult.animal_detected  || false,
     animal_type:      aiResult.animal_type       || 'none',
-    animal_threat:    aiResult.animal_threat_level || 'none'
+    animal_threat:    aiResult.animal_threat_level || 'none',
+    server_ist:       getISTString()   // server-side IST timestamp for this report
   });
 });
 
@@ -1801,7 +1820,7 @@ app.get('/api/social/daily-content', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  const today = new Date().toDateString();
+  const today = getISTDateString();
   // Return cached if already generated today
   if (_socialCache.date === today && _socialCache.content) {
     return res.json({ ...(_socialCache.content), cached: true });
