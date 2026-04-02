@@ -1,27 +1,54 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid,
-  Tooltip, ResponsiveContainer, Legend
+  Tooltip, ResponsiveContainer
 } from 'recharts';
 import * as api from '../api';
 
-// ─── helpers ─────────────────────────────────────────────────
+// ─── IST helpers ─────────────────────────────────────────────
 
+function getISTString(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+    hour12: true
+  });
+}
+function getISTDateStr(iso) {
+  const d = iso ? new Date(iso) : new Date();
+  return d.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata',
+    weekday: 'short', day: 'numeric', month: 'short', year: 'numeric'
+  });
+}
 function fmtTime(iso) {
   if (!iso) return '';
-  const d = new Date(iso);
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
-function fmtFull(iso) {
-  if (!iso) return 'Never';
-  return new Date(iso).toLocaleString();
+  return new Date(iso).toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
+  });
 }
 function timeAgo(iso) {
   if (!iso) return '';
   const sec = Math.floor((Date.now() - new Date(iso)) / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  if (sec < 3600) return `${Math.floor(sec/60)}m ago`;
-  return `${Math.floor(sec/3600)}h ago`;
+  if (sec < 60)   return `${sec} second pehle`;
+  if (sec < 3600) return `${Math.floor(sec / 60)} min pehle`;
+  return `${Math.floor(sec / 3600)} ghante pehle`;
+}
+
+// ─── Desi status labels ───────────────────────────────────────
+
+function moistureStatus(pct) {
+  if (pct < 20) return { label: '🌵 Bahut Sukha!',   color: '#ef4444' };
+  if (pct < 30) return { label: '💧 Paani Chahiye',   color: '#f97316' };
+  if (pct < 70) return { label: '✅ Theek Hai',       color: '#22c55e' };
+  return           { label: '🌊 Zyada Geela',          color: '#eab308' };
+}
+function tempStatus(c) {
+  if (c > 38) return { label: '🔥 Bahut Garam!',  color: '#ef4444' };
+  if (c > 35) return { label: '☀️ Thoda Garam',  color: '#f97316' };
+  if (c < 10) return { label: '❄️ Bahut Thanda', color: '#3b82f6' };
+  return        { label: '🌡️ Sahi Hai',           color: '#22c55e' };
 }
 
 function healthColor(score) {
@@ -31,8 +58,22 @@ function healthColor(score) {
   return '#ef4444';
 }
 function alertColor(level) {
-  return { none: '#22c55e', low: '#84cc16', medium: '#eab308', high: '#ef4444', critical: '#dc2626' }[level] || '#6b7280';
+  return {
+    none: '#22c55e', low: '#84cc16', medium: '#eab308',
+    high: '#ef4444', critical: '#dc2626'
+  }[level] || '#6b7280';
 }
+function alertLabel(level) {
+  return {
+    none:     '✅ Sab Theek',
+    low:      '🟡 Thodi Chinta',
+    medium:   '🟠 Dhyan Do',
+    high:     '🔴 Khatre ki Ghanti',
+    critical: '🚨 Bahut Zaruri'
+  }[level] || '❓ Pata Nahi';
+}
+
+// ─── Gauge ───────────────────────────────────────────────────
 
 function GaugeSVG({ value = 0, max = 100, color, label, unit }) {
   const pct = Math.min(1, Math.max(0, value / max));
@@ -47,11 +88,15 @@ function GaugeSVG({ value = 0, max = 100, color, label, unit }) {
   const large = pct * 280 > 180 ? 1 : 0;
   return (
     <svg width="140" height="100" viewBox="0 0 140 100">
-      <path d={`M ${toXY(-140).x} ${toXY(-140).y} A ${r} ${r} 0 1 1 ${toXY(140).x} ${toXY(140).y}`}
-        fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" strokeLinecap="round" />
+      <path
+        d={`M ${toXY(-140).x} ${toXY(-140).y} A ${r} ${r} 0 1 1 ${toXY(140).x} ${toXY(140).y}`}
+        fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" strokeLinecap="round"
+      />
       {pct > 0 && (
-        <path d={`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`}
-          fill="none" stroke={color} strokeWidth="10" strokeLinecap="round" />
+        <path
+          d={`M ${start.x} ${start.y} A ${r} ${r} 0 ${large} 1 ${end.x} ${end.y}`}
+          fill="none" stroke={color} strokeWidth="10" strokeLinecap="round"
+        />
       )}
       <text x="70" y="62" textAnchor="middle" fill="white" fontSize="20" fontWeight="700">
         {value !== null && value !== undefined ? Math.round(value) : '--'}
@@ -62,40 +107,33 @@ function GaugeSVG({ value = 0, max = 100, color, label, unit }) {
   );
 }
 
-function AlertBadge({ level }) {
-  const labels = { none: '✅ All Good', low: '🟡 Low Alert', medium: '🟠 Medium Alert', high: '🔴 High Alert', critical: '🚨 Critical' };
-  return (
-    <span className="live-alert-badge" style={{ background: alertColor(level) + '33', color: alertColor(level), border: `1px solid ${alertColor(level)}66` }}>
-      {labels[level] || '❓ Unknown'}
-    </span>
-  );
-}
-
-// ─── MAIN COMPONENT ──────────────────────────────────────────
+// ─── MAIN ─────────────────────────────────────────────────────
 
 export default function LivePage({ isGuest, onAddToast }) {
-  const [live, setLive]       = useState(null);
-  const [history, setHistory] = useState([]);
-  const [stats, setStats]     = useState(null);
-  const [connected, setConnected]     = useState(false);
+  const [live, setLive]             = useState(null);
+  const [history, setHistory]       = useState([]);
+  const [stats, setStats]           = useState(null);
+  const [connected, setConnected]   = useState(false);
   const [pumpLoading, setPumpLoading] = useState(false);
   const [pumpDuration, setPumpDuration] = useState(5);
-  const [imgError, setImgError]       = useState(false);
-  const [devices, setDevices] = useState([]);
+  const [imgError, setImgError]     = useState(false);
+  const [devices, setDevices]       = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('all');
+  const [istClock, setIstClock]     = useState(getISTString());
   const esRef = useRef(null);
 
   const BASE_URL = import.meta.env.VITE_BACKEND_URL || 'https://pl-kp57.onrender.com';
 
+  // IST live clock
   useEffect(() => {
-    // Load registered devices for selector
-    api.getDevices().then(setDevices).catch(() => {});
+    const t = setInterval(() => setIstClock(getISTString()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
-    // Fetch history on mount
+  useEffect(() => {
+    api.getDevices().then(setDevices).catch(() => {});
     api.getDeviceHistory(100).then(h => setHistory(h || [])).catch(() => {});
     api.getDeviceStats().then(setStats).catch(() => {});
-
-    // Connect SSE
     connectSSE();
     return () => { if (esRef.current) esRef.current.close(); };
   }, []);
@@ -106,12 +144,10 @@ export default function LivePage({ isGuest, onAddToast }) {
     const url = `${BASE_URL}/api/live-stream${token ? `?token=${token}` : ''}`;
     const es = new EventSource(url, { withCredentials: true });
     esRef.current = es;
-
     es.onopen = () => setConnected(true);
     es.onmessage = (e) => {
       try {
         const data = JSON.parse(e.data);
-        // Filter by selected device if one is chosen
         setSelectedDeviceId(sel => {
           if (sel === 'all' || !sel || data.device_id === sel || (!data.device_id && sel === 'legacy')) {
             setLive(data);
@@ -119,40 +155,34 @@ export default function LivePage({ isGuest, onAddToast }) {
           }
           return sel;
         });
-        setHistory(prev => {
-          const next = [data, ...prev.filter(r => r.id !== data.id)];
-          return next.slice(0, 500);
-        });
+        setHistory(prev => [data, ...prev.filter(r => r.id !== data.id)].slice(0, 500));
       } catch (_) {}
     };
     es.onerror = () => {
       setConnected(false);
-      // Retry after 10s
       setTimeout(connectSSE, 10000);
     };
   }
 
   async function handleManualPump() {
-    if (isGuest) return onAddToast?.({ type: 'warning', message: 'Guests cannot control the pump' });
+    if (isGuest) return onAddToast?.({ type: 'warning', message: 'Guests paani nahi de sakte 🚫' });
     setPumpLoading(true);
     try {
       await api.triggerPump(pumpDuration * 1000);
-      onAddToast?.({ type: 'success', message: `💦 Pump queued for ${pumpDuration}s — will activate on next device report` });
+      onAddToast?.({ type: 'success', message: `💦 Paani command bhej diya — ${pumpDuration} second ke liye!` });
     } catch (err) {
-      onAddToast?.({ type: 'error', message: err.message || 'Pump command failed' });
+      onAddToast?.({ type: 'error', message: err.message || 'Command fail ho gaya' });
     } finally {
       setPumpLoading(false);
     }
   }
 
-  // Filter history by selected device
   const filteredHistory = selectedDeviceId === 'all'
     ? history
     : selectedDeviceId === 'legacy'
       ? history.filter(r => !r.device_id)
       : history.filter(r => r.device_id === selectedDeviceId);
 
-  // Chart data — last 50 readings reversed (oldest first)
   const chartData = [...filteredHistory].reverse().slice(-50).map(r => ({
     t: fmtTime(r.created_at),
     moisture: r.moisture_pct,
@@ -160,42 +190,44 @@ export default function LivePage({ isGuest, onAddToast }) {
     health: r.ai_health_score
   }));
 
-  const imgSrc = live?.image_path ? `${BASE_URL}${live.image_path}` : null;
+  const imgSrc = live?.image_path
+    ? (live.image_path.startsWith('http') ? live.image_path : `${BASE_URL}${live.image_path}`)
+    : null;
+
+  const mStatus = live ? moistureStatus(live.moisture_pct) : null;
+  const tStatus = live ? tempStatus(live.temperature_c) : null;
 
   return (
     <div className="page live-page">
-      {/* ── Header ── */}
-      <div className="live-header">
-        <div>
-          <h1 className="page-title">🌿 Live Monitor</h1>
-          <p className="page-subtitle">
-            AI-powered real-time plant health — Azure GPT-4o Vision
-          </p>
+
+      {/* ── Desi Hero Banner ── */}
+      <div className="live-hero-banner">
+        <div className="live-hero-left">
+          <div className="live-hero-title">🌱 Live Nazar</div>
+          <div className="live-hero-sub">AI se real-time paudhe ki sehat dekho — Gemini 2.0 Flash</div>
         </div>
-        <div className={`live-connection ${connected ? 'live-on' : 'live-off'}`}>
-          <span className="live-dot" />
-          {connected ? 'Live' : 'Connecting…'}
+        <div className="live-hero-right">
+          <div className={`live-connection-desi ${connected ? 'live-on-desi' : 'live-off-desi'}`}>
+            <span className="live-dot" />
+            {connected ? 'Juda Hua ✓' : 'Jod Raha Hai…'}
+          </div>
+          <div className="live-ist-clock">🕐 {istClock} IST</div>
+          <div className="live-ist-date">{getISTDateStr()}</div>
         </div>
       </div>
 
       {/* ── Device selector ── */}
       {devices.length > 0 && (
         <div className="live-device-selector">
-          <label className="device-sel-label">📡 Device:</label>
+          <label className="device-sel-label">📡 Device Chuniye:</label>
           <select
             className="device-sel-dropdown"
             value={selectedDeviceId}
-            onChange={e => {
-              setSelectedDeviceId(e.target.value);
-              setLive(null);
-              setImgError(false);
-            }}
+            onChange={e => { setSelectedDeviceId(e.target.value); setLive(null); setImgError(false); }}
           >
-            <option value="all">All Devices</option>
-            {devices.map(d => (
-              <option key={d.id} value={d.id}>{d.name}</option>
-            ))}
-            <option value="legacy">Legacy / Unregistered</option>
+            <option value="all">Sabhi Devices</option>
+            {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+            <option value="legacy">Purana / Unregistered</option>
           </select>
         </div>
       )}
@@ -203,7 +235,7 @@ export default function LivePage({ isGuest, onAddToast }) {
       {/* ── Guest notice ── */}
       {isGuest && (
         <div className="guest-readonly-notice">
-          👀 Guest mode — live feed is read-only. Create an account to control the pump.
+          👀 Guest mode — sirf dekhna hai. Paani dene ke liye account banao!
         </div>
       )}
 
@@ -211,9 +243,9 @@ export default function LivePage({ isGuest, onAddToast }) {
       {!live && (
         <div className="live-waiting">
           <div className="live-waiting-icon">📡</div>
-          <h3>Waiting for device…</h3>
-          <p>Make sure your ESP32-S3 is powered and connected to WiFi.<br />
-            Data will appear here as soon as the first report arrives.</p>
+          <h3>Device ka Intezaar Hai…</h3>
+          <p>Apna ESP32-S3 on karo aur WiFi se jodo.<br />
+            Pehla report aate hi yahan dikhega 🌾</p>
         </div>
       )}
 
@@ -223,20 +255,15 @@ export default function LivePage({ isGuest, onAddToast }) {
           <div className="live-top-grid">
 
             {/* Camera card */}
-            <div className="live-card camera-card">
+            <div className="live-card live-card-desi camera-card">
               <div className="live-card-header">
-                <span>📷 Plant Camera</span>
+                <span>📷 Paudhe ki Photo</span>
                 <span className="live-timestamp">{timeAgo(live.created_at)}</span>
               </div>
               {imgSrc && !imgError ? (
-                <img
-                  src={imgSrc}
-                  alt="Plant"
-                  className="live-plant-img"
-                  onError={() => setImgError(true)}
-                />
+                <img src={imgSrc} alt="Plant" className="live-plant-img" onError={() => setImgError(true)} />
               ) : (
-                <div className="live-no-img">📸 No image from device</div>
+                <div className="live-no-img">📸 Abhi koi photo nahi hai</div>
               )}
               {live.ai_growth_stage && (
                 <div className="live-growth-tag">🌱 {live.ai_growth_stage}</div>
@@ -247,44 +274,44 @@ export default function LivePage({ isGuest, onAddToast }) {
             <div className="live-right-col">
 
               {/* Health score */}
-              <div className="live-card health-card">
-                <div className="live-card-header"><span>💚 Health Score</span></div>
+              <div className="live-card live-card-desi health-card">
+                <div className="live-card-header"><span>💚 Sehat Score</span></div>
                 <div className="health-score-display" style={{ color: healthColor(live.ai_health_score) }}>
                   {live.ai_health_score ?? '--'}<span style={{ fontSize: 20 }}>/100</span>
                 </div>
-                <AlertBadge level={live.ai_alert_level} />
+                <span className="live-alert-badge-desi" style={{
+                  background: alertColor(live.ai_alert_level) + '22',
+                  color: alertColor(live.ai_alert_level),
+                  border: `1px solid ${alertColor(live.ai_alert_level)}55`
+                }}>
+                  {alertLabel(live.ai_alert_level)}
+                </span>
                 {live.ai_disease && live.ai_disease !== 'none' && (
                   <div className="live-disease-tag">🦠 {live.ai_disease}</div>
                 )}
               </div>
 
               {/* Sensor gauges */}
-              <div className="live-card sensors-card">
-                <div className="live-card-header"><span>📊 Sensors</span></div>
+              <div className="live-card live-card-desi sensors-card">
+                <div className="live-card-header"><span>📊 Sensor Jaankari</span></div>
                 <div className="sensor-gauges">
                   <div className="sensor-gauge-wrap">
-                    <GaugeSVG value={live.moisture_pct} max={100} color="#3b82f6" label="Moisture" unit="%" />
-                    <div className="sensor-status" style={{ color: live.moisture_pct < 30 ? '#ef4444' : live.moisture_pct > 70 ? '#eab308' : '#22c55e' }}>
-                      {live.moisture_pct < 20 ? 'Critically dry' : live.moisture_pct < 30 ? 'Needs water' : live.moisture_pct < 70 ? 'Good' : 'Wet'}
-                    </div>
+                    <GaugeSVG value={live.moisture_pct} max={100} color="#3b82f6" label="Nami" unit="%" />
+                    <div className="sensor-status" style={{ color: mStatus.color }}>{mStatus.label}</div>
                   </div>
                   <div className="sensor-gauge-wrap">
-                    <GaugeSVG value={live.temperature_c} max={50} color="#f97316" label="Temperature" unit="°C" />
-                    <div className="sensor-status" style={{ color: live.temperature_c > 35 || live.temperature_c < 10 ? '#ef4444' : '#22c55e' }}>
-                      {live.temperature_c > 35 ? 'Too hot' : live.temperature_c < 10 ? 'Too cold' : 'Normal'}
-                    </div>
+                    <GaugeSVG value={live.temperature_c} max={50} color="#f97316" label="Garmi" unit="°C" />
+                    <div className="sensor-status" style={{ color: tStatus.color }}>{tStatus.label}</div>
                   </div>
                   {live.battery_pct != null && (
                     <div className="sensor-gauge-wrap">
                       <GaugeSVG
-                        value={live.battery_pct}
-                        max={100}
+                        value={live.battery_pct} max={100}
                         color={live.battery_pct < 20 ? '#ef4444' : live.battery_pct < 50 ? '#eab308' : '#22c55e'}
-                        label="Battery"
-                        unit="%"
+                        label="Battery" unit="%"
                       />
                       <div className="sensor-status" style={{ color: live.battery_pct < 20 ? '#ef4444' : live.battery_pct < 50 ? '#eab308' : '#22c55e' }}>
-                        {live.battery_pct < 20 ? '🔴 Low — charge soon' : live.battery_pct < 50 ? '🟡 Medium' : '🟢 Good'}
+                        {live.battery_pct < 20 ? '🔴 Charge Karo!' : live.battery_pct < 50 ? '🟡 Theek Hai' : '🟢 Full Hai'}
                       </div>
                     </div>
                   )}
@@ -293,18 +320,20 @@ export default function LivePage({ isGuest, onAddToast }) {
             </div>
           </div>
 
-          {/* ── AI Analysis card ── */}
-          <div className="live-card ai-card">
-            {/* Header */}
+          {/* ── AI Report card ── */}
+          <div className="live-card live-card-desi ai-card">
             <div className="ai-card-header">
               <div className="ai-card-header-left">
                 <span className="ai-gemini-badge">✦ Gemini 2.0 Flash</span>
-                <span className="ai-card-title">Plant Health Report</span>
+                <span className="ai-card-title">Paudhe ki Sehat Report 🌿</span>
               </div>
-              <span className="live-timestamp">{fmtFull(live.created_at)}</span>
+              <div style={{ textAlign: 'right' }}>
+                <div className="live-timestamp">{getISTString(live.created_at)} IST</div>
+                <div className="live-timestamp">{getISTDateStr(live.created_at)}</div>
+              </div>
             </div>
 
-            {/* Health score + visual status row */}
+            {/* Score + visual status */}
             <div className="ai-hero-row">
               {live.ai_health_score != null && (
                 <div className="ai-score-ring" style={{
@@ -325,7 +354,7 @@ export default function LivePage({ isGuest, onAddToast }) {
               )}
             </div>
 
-            {/* Pump decision banner */}
+            {/* Pump / valve banner */}
             {live.ai_pump_reason && (
               <div className={`ai-pump-banner ${live.pump_activated ? 'pump-yes' : 'pump-no'}`}>
                 <div className="ai-pump-icon-wrap">
@@ -333,10 +362,10 @@ export default function LivePage({ isGuest, onAddToast }) {
                 </div>
                 <div className="ai-pump-text">
                   <div className="ai-pump-label">
-                    {live.pump_activated ? '— Valve Opening —' : '— No Water Needed —'}
+                    {live.pump_activated ? '— Valve Khul Raha Hai —' : '— Paani Ki Zarurat Nahi —'}
                   </div>
                   <div className="ai-pump-status-badge">
-                    {live.pump_activated ? 'WATERING ACTIVATED' : 'SOIL MOISTURE OK'}
+                    {live.pump_activated ? 'PAANI DE RAHA HAI 💦' : 'MITTI THEEK HAI ✓'}
                   </div>
                   <div className="ai-pump-reason-text">{live.ai_pump_reason}</div>
                 </div>
@@ -346,12 +375,11 @@ export default function LivePage({ isGuest, onAddToast }) {
 
             {/* Three columns */}
             <div className="ai-insights-grid">
-              {/* Alerts */}
               {live.ai_alerts?.length > 0 && (
                 <div className="ai-insight-col ai-col-alert">
                   <div className="ai-col-header">
                     <div className="ai-col-icon-box alert-icon-box">🚨</div>
-                    <span className="ai-col-title">Alerts</span>
+                    <span className="ai-col-title">Chetaavani</span>
                     <span className="ai-col-count">{live.ai_alerts.length}</span>
                   </div>
                   <div className="ai-col-items">
@@ -365,12 +393,11 @@ export default function LivePage({ isGuest, onAddToast }) {
                 </div>
               )}
 
-              {/* Immediate actions */}
               {live.ai_immediate_actions?.length > 0 && (
                 <div className="ai-insight-col ai-col-action">
                   <div className="ai-col-header">
                     <div className="ai-col-icon-box action-icon-box">⚡</div>
-                    <span className="ai-col-title">Do Right Now</span>
+                    <span className="ai-col-title">Abhi Karo</span>
                     <span className="ai-col-count">{live.ai_immediate_actions.length}</span>
                   </div>
                   <div className="ai-col-items">
@@ -384,12 +411,11 @@ export default function LivePage({ isGuest, onAddToast }) {
                 </div>
               )}
 
-              {/* Recommendations */}
               {live.ai_recommendations?.length > 0 && (
                 <div className="ai-insight-col ai-col-rec">
                   <div className="ai-col-header">
                     <div className="ai-col-icon-box rec-icon-box">💡</div>
-                    <span className="ai-col-title">Tips for You</span>
+                    <span className="ai-col-title">Salah</span>
                     <span className="ai-col-count">{live.ai_recommendations.length}</span>
                   </div>
                   <div className="ai-col-items">
@@ -404,32 +430,34 @@ export default function LivePage({ isGuest, onAddToast }) {
               )}
             </div>
 
-            {/* Extra info pills row */}
+            {/* Meta pills */}
             <div className="ai-meta-row">
               {live.ai_disease && live.ai_disease !== 'none' && (
-                <span className="ai-meta-pill ai-pill-danger">🦠 {live.ai_disease}</span>
+                <span className="ai-meta-pill ai-pill-danger">🦠 Bimari: {live.ai_disease}</span>
               )}
               {live.ai_growth_stage && live.ai_growth_stage !== 'vegetative' && (
-                <span className="ai-meta-pill ai-pill-info">🌱 Stage: {live.ai_growth_stage}</span>
+                <span className="ai-meta-pill ai-pill-info">🌱 Avastha: {live.ai_growth_stage}</span>
               )}
               {live.ai_animal_detected && (
-                <span className="ai-meta-pill ai-pill-danger">🐾 Animal detected: {live.ai_animal_type}</span>
+                <span className="ai-meta-pill ai-pill-danger">🐾 Janwar dikha: {live.ai_animal_type}</span>
               )}
             </div>
           </div>
 
-          {/* ── Pump control ── */}
-          <div className="live-card pump-card">
-            <div className="live-card-header"><span>💦 Water Pump Control</span></div>
+          {/* ── Pump / Valve control ── */}
+          <div className="live-card live-card-desi pump-card">
+            <div className="live-card-header live-card-header-saffron">
+              <span>💦 Paani Valve Control</span>
+            </div>
             <div className="pump-control-row">
               <div className="pump-status-block">
                 <div className={`pump-indicator ${live.pump_activated ? 'pump-on' : 'pump-off'}`}>
                   <span className="pump-dot" />
-                  {live.pump_activated ? 'Activated last cycle' : 'Idle'}
+                  {live.pump_activated ? 'Pichhli baar paani diya ✓' : 'Araam Mein Hai'}
                 </div>
                 {live.pump_activated && (
                   <div className="pump-last">
-                    Last run: {live.pump_duration_ms / 1000}s at {fmtFull(live.created_at)}
+                    Pichli baar: {live.pump_duration_ms / 1000} sec — {getISTString(live.created_at)} IST
                   </div>
                 )}
               </div>
@@ -437,69 +465,62 @@ export default function LivePage({ isGuest, onAddToast }) {
               {!isGuest && (
                 <div className="pump-manual-block">
                   <div className="pump-duration-row">
-                    <label>Duration:</label>
-                    <input
-                      type="range"
-                      min="3" max="30" step="1"
+                    <label>Kitna Paani:</label>
+                    <input type="range" min="3" max="30" step="1"
                       value={pumpDuration}
                       onChange={e => setPumpDuration(+e.target.value)}
                     />
                     <span className="pump-duration-val">{pumpDuration}s</span>
                   </div>
-                  <button
-                    className="pump-btn"
-                    onClick={handleManualPump}
-                    disabled={pumpLoading}
-                  >
-                    {pumpLoading ? '⏳ Queuing…' : '💧 Water Now'}
+                  <button className="pump-btn-desi" onClick={handleManualPump} disabled={pumpLoading}>
+                    {pumpLoading ? '⏳ Bhej Raha Hai…' : '💧 Paani Do'}
                   </button>
-                  <p className="pump-note">Command queues until the next device report</p>
+                  <p className="pump-note">Agle device report par valve khulega</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* ── History charts ── */}
+          {/* ── Charts ── */}
           {chartData.length > 1 && (
-            <div className="live-card chart-card">
-              <div className="live-card-header"><span>📈 Sensor History (last {chartData.length} readings)</span></div>
+            <div className="live-card live-card-desi chart-card">
+              <div className="live-card-header">
+                <span>📈 Sensor Itihaas (last {chartData.length} readings)</span>
+              </div>
               <div className="live-charts-grid">
-                {/* Moisture chart */}
                 <div>
-                  <h4 className="chart-sub-title">Soil Moisture %</h4>
+                  <h4 className="chart-sub-title">🌊 Mitti ki Nami %</h4>
                   <ResponsiveContainer width="100%" height={160}>
                     <LineChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                       <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd" />
                       <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
                       <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }} />
-                      <Line type="monotone" dataKey="moisture" stroke="#3b82f6" strokeWidth={2} dot={false} name="Moisture %" />
+                      <Line type="monotone" dataKey="moisture" stroke="#3b82f6" strokeWidth={2} dot={false} name="Nami %" />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                {/* Temp chart */}
                 <div>
-                  <h4 className="chart-sub-title">Temperature °C</h4>
+                  <h4 className="chart-sub-title">🌡️ Garmi °C</h4>
                   <ResponsiveContainer width="100%" height={160}>
                     <LineChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                       <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd" />
                       <YAxis tick={{ fill: '#94a3b8', fontSize: 10 }} />
                       <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }} />
-                      <Line type="monotone" dataKey="temp" stroke="#f97316" strokeWidth={2} dot={false} name="Temp °C" />
+                      <Line type="monotone" dataKey="temp" stroke="#f97316" strokeWidth={2} dot={false} name="Garmi °C" />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
-                {/* Health chart */}
                 <div>
-                  <h4 className="chart-sub-title">AI Health Score</h4>
+                  <h4 className="chart-sub-title">💚 Sehat Score</h4>
                   <ResponsiveContainer width="100%" height={160}>
                     <LineChart data={chartData}>
                       <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
                       <XAxis dataKey="t" tick={{ fill: '#94a3b8', fontSize: 10 }} interval="preserveStartEnd" />
                       <YAxis domain={[0, 100]} tick={{ fill: '#94a3b8', fontSize: 10 }} />
                       <Tooltip contentStyle={{ background: '#1e293b', border: '1px solid #334155', color: '#f1f5f9' }} />
-                      <Line type="monotone" dataKey="health" stroke="#22c55e" strokeWidth={2} dot={false} name="Health Score" />
+                      <Line type="monotone" dataKey="health" stroke="#22c55e" strokeWidth={2} dot={false} name="Sehat" />
                     </LineChart>
                   </ResponsiveContainer>
                 </div>
@@ -507,44 +528,48 @@ export default function LivePage({ isGuest, onAddToast }) {
             </div>
           )}
 
-          {/* ── Stats summary ── */}
+          {/* ── Summary stats ── */}
           {stats && (
-            <div className="live-card stats-card">
-              <div className="live-card-header"><span>📊 Summary Stats</span></div>
+            <div className="live-card live-card-desi stats-card">
+              <div className="live-card-header"><span>📊 Kul Jaankari</span></div>
               <div className="live-stats-row">
-                <div className="live-stat">
+                <div className="live-stat live-stat-desi live-stat-blue">
                   <div className="live-stat-val">{stats.count}</div>
-                  <div className="live-stat-lbl">Total Readings</div>
+                  <div className="live-stat-lbl">Kul Readings</div>
+                  <div className="live-stat-sublbl">Total Records</div>
                 </div>
-                <div className="live-stat">
+                <div className="live-stat live-stat-desi live-stat-green">
                   <div className="live-stat-val">{stats.avg_moisture ?? '--'}%</div>
-                  <div className="live-stat-lbl">Avg Moisture</div>
+                  <div className="live-stat-lbl">Avshat Nami</div>
+                  <div className="live-stat-sublbl">Avg Moisture</div>
                 </div>
-                <div className="live-stat">
+                <div className="live-stat live-stat-desi live-stat-orange">
                   <div className="live-stat-val">{stats.avg_temp ?? '--'}°C</div>
-                  <div className="live-stat-lbl">Avg Temp</div>
+                  <div className="live-stat-lbl">Avshat Garmi</div>
+                  <div className="live-stat-sublbl">Avg Temp</div>
                 </div>
-                <div className="live-stat">
+                <div className="live-stat live-stat-desi live-stat-saffron">
                   <div className="live-stat-val">{stats.pump_activations_last_100}</div>
-                  <div className="live-stat-lbl">Pump Runs (last 100)</div>
+                  <div className="live-stat-lbl">Paani Diya</div>
+                  <div className="live-stat-sublbl">Pump Runs (last 100)</div>
                 </div>
               </div>
             </div>
           )}
 
           {/* ── Recent log ── */}
-          <div className="live-card log-card">
-            <div className="live-card-header"><span>📋 Recent Log</span></div>
+          <div className="live-card live-card-desi log-card">
+            <div className="live-card-header"><span>📋 Haal ki Khabar</span></div>
             <div className="live-log-table-wrap">
               <table className="live-log-table">
                 <thead>
                   <tr>
-                    <th>Time</th>
-                    <th>Moisture</th>
-                    <th>Temp</th>
-                    <th>Health</th>
+                    <th>Samay (IST)</th>
+                    <th>Nami</th>
+                    <th>Garmi</th>
+                    <th>Sehat</th>
                     <th>Alert</th>
-                    <th>Pump</th>
+                    <th>Paani</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -554,8 +579,8 @@ export default function LivePage({ isGuest, onAddToast }) {
                       <td>{r.moisture_pct}%</td>
                       <td>{r.temperature_c}°C</td>
                       <td style={{ color: healthColor(r.ai_health_score) }}>{r.ai_health_score ?? '--'}</td>
-                      <td><span style={{ color: alertColor(r.ai_alert_level) }}>{r.ai_alert_level || '--'}</span></td>
-                      <td>{r.pump_activated ? `✅ ${r.pump_duration_ms/1000}s` : '—'}</td>
+                      <td><span style={{ color: alertColor(r.ai_alert_level) }}>{alertLabel(r.ai_alert_level)}</span></td>
+                      <td>{r.pump_activated ? `✅ ${r.pump_duration_ms / 1000}s` : '—'}</td>
                     </tr>
                   ))}
                 </tbody>

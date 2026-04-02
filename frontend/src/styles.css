@@ -2435,6 +2435,164 @@ input:focus, select:focus, textarea:focus {
   color: var(--text-primary);
 }
 
+/* ============================================================
+   LIVE MONITOR — DESI TOUCH 🌾
+   ============================================================ */
+
+/* Hero banner */
+.live-hero-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  background: linear-gradient(135deg, #1a3d2b 0%, #0f2a1c 60%, #1a2a0d 100%);
+  border-radius: 16px;
+  padding: 22px 28px;
+  margin-bottom: 20px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,0.07);
+}
+.live-hero-banner::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 5px;
+  background: linear-gradient(180deg, #FF9933, #ffffff, #138808);
+  border-radius: 16px 0 0 16px;
+}
+.live-hero-banner::after {
+  content: '🌾';
+  position: absolute;
+  right: 24px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 72px;
+  opacity: 0.06;
+  pointer-events: none;
+}
+
+.live-hero-left {}
+.live-hero-title {
+  font-size: 26px;
+  font-weight: 800;
+  color: #FFB300;
+  letter-spacing: -0.5px;
+  font-family: 'Noto Sans Devanagari', 'Segoe UI', sans-serif;
+}
+.live-hero-sub {
+  font-size: 13px;
+  color: rgba(255,255,255,0.55);
+  margin-top: 4px;
+}
+
+.live-hero-right { text-align: right; }
+.live-connection-desi {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid;
+  margin-bottom: 6px;
+}
+.live-on-desi  { color: #4ade80; border-color: #4ade8044; background: #4ade8011; }
+.live-off-desi { color: #9ca3af; border-color: #9ca3af44; background: #9ca3af11; }
+.live-ist-clock {
+  font-size: 14px;
+  font-weight: 700;
+  color: #FFB300;
+  font-variant-numeric: tabular-nums;
+}
+.live-ist-date {
+  font-size: 11px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 2px;
+}
+
+/* Desi card style — colored left border */
+.live-card-desi {
+  border-left: 4px solid #22c55e !important;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.live-card-desi:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+}
+.camera-card.live-card-desi  { border-left-color: #3b82f6 !important; }
+.health-card.live-card-desi  { border-left-color: #22c55e !important; }
+.sensors-card.live-card-desi { border-left-color: #f97316 !important; }
+.ai-card.live-card-desi      { border-left-color: #FFB300 !important; }
+.pump-card.live-card-desi    { border-left-color: #06b6d4 !important; }
+.chart-card.live-card-desi   { border-left-color: #8b5cf6 !important; }
+.stats-card.live-card-desi   { border-left-color: #FF9933 !important; }
+.log-card.live-card-desi     { border-left-color: #10b981 !important; }
+
+/* Saffron-accented card header */
+.live-card-header-saffron { color: #FFB300 !important; }
+
+/* Alert badge desi */
+.live-alert-badge-desi {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-top: 8px;
+}
+
+/* Pump button desi */
+.pump-btn-desi {
+  width: 100%;
+  padding: 13px;
+  border-radius: 10px;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  background: linear-gradient(135deg, #FF9933 0%, #e07b00 100%);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(255,153,51,0.35);
+  transition: opacity 0.2s, transform 0.15s;
+}
+.pump-btn-desi:hover:not(:disabled) {
+  opacity: 0.9;
+  transform: translateY(-1px);
+}
+.pump-btn-desi:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+/* Desi stat cards in summary */
+.live-stat-desi {
+  border-radius: 12px;
+  padding: 16px 20px !important;
+  border-top: 3px solid transparent;
+  background: rgba(255,255,255,0.04);
+}
+.live-stat-blue   { border-top-color: #3b82f6; }
+.live-stat-green  { border-top-color: #22c55e; }
+.live-stat-orange { border-top-color: #f97316; }
+.live-stat-saffron{ border-top-color: #FF9933; }
+
+.live-stat-sublbl {
+  font-size: 10px;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  opacity: 0.6;
+}
+
+/* Waiting state desi */
+.live-waiting h3 { color: #FFB300 !important; }
+
+@media (max-width: 600px) {
+  .live-hero-banner { flex-direction: column; }
+  .live-hero-right  { text-align: left; }
+  .live-hero-banner::after { display: none; }
+}
+
 /* Sidebar live button */
 .sidebar-live-btn {
   position: relative;
