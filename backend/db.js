@@ -551,7 +551,7 @@ module.exports = {
   // Notes
   getNotes, saveNotes, getNotesByPlantId, createNote,
   // Device readings
-  createDeviceReading, getLatestDeviceReading, getDeviceReadingHistory,
+  createDeviceReading, getDeviceReadings, getLatestDeviceReading, getDeviceReadingHistory,
   getDeviceReadingsByDeviceId, getLatestDeviceReadingByDeviceId,
   // Fields
   getFields, saveFields, findFieldById, findFieldsByUserId, createField, updateField, deleteField,

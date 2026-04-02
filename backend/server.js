@@ -1035,13 +1035,47 @@ function requireDevice(req, res, next) {
 // Pending manual pump command (set by dashboard, consumed by ESP32)
 let pendingPumpCmd = null;
 
-// SSE clients
-const sseClients = new Set();
+// SSE clients — keyed by userId so each user only receives their own device events
+const sseClients = new Map(); // Map<userId, Set<res>>
 
-function broadcastSSE(data) {
-  sseClients.forEach(client => {
+function broadcastSSE(data, userId) {
+  if (!userId) return; // safety guard — never broadcast without a target
+  const clients = sseClients.get(userId);
+  if (!clients) return;
+  clients.forEach(client => {
     try { client.write(`data: ${JSON.stringify(data)}\n\n`); } catch (_) {}
   });
+}
+
+// Helper: get all device IDs that belong to a user
+function getUserDeviceIds(userId) {
+  return db.findDevicesByUserId(userId).map(d => d.id);
+}
+
+// Helper: latest device reading for a specific user
+function getLatestReadingForUser(userId) {
+  const ids = getUserDeviceIds(userId);
+  if (!ids.length) return null;
+  return store_device_readings_for_user(ids, 1)[0] || null;
+}
+
+// Helper: filtered device readings for a user (newest first)
+function getReadingsForUser(userId, limit = 100) {
+  const ids = getUserDeviceIds(userId);
+  if (!ids.length) return [];
+  return store_device_readings_for_user(ids, limit);
+}
+
+function store_device_readings_for_user(deviceIds, limit) {
+  const set = new Set(deviceIds);
+  const results = [];
+  for (const r of db.getDeviceReadings()) {
+    if (set.has(r.device_id)) {
+      results.push(r);
+      if (results.length >= limit) break;
+    }
+  }
+  return results;
 }
 
 // ── Main device report: ESP32 POSTs sensor data + raw JPEG ──
@@ -1173,8 +1207,9 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     pump_duration_ms: pump_activated ? pump_duration_ms : 0
   });
 
-  // Push to all live-stream clients
-  broadcastSSE(reading);
+  // Push to the device owner's live-stream clients only
+  const deviceOwnerId = req.deviceRecord ? req.deviceRecord.user_id : null;
+  if (deviceOwnerId) broadcastSSE(reading, deviceOwnerId);
 
   const buzzer = aiResult.alert_level === 'high'
     || aiResult.alert_level === 'critical'
@@ -1233,7 +1268,7 @@ app.post('/api/farm/pump-command', requireAuth, (req, res) => {
 });
 
 // ── Live SSE stream ──────────────────────────────────────────
-app.get('/api/live-stream', (req, res) => {
+app.get('/api/live-stream', requireAuth, (req, res) => {
   // CORS for SSE (must allow cross-origin from Vercel)
   const origin = req.headers.origin || '';
   if (!origin || allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
@@ -1245,24 +1280,36 @@ app.get('/api/live-stream', (req, res) => {
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
-  // Send latest data immediately
-  const latest = db.getLatestDeviceReading();
+  const userId = req.user.id;
+
+  // Send THIS user's latest reading immediately (not anyone else's)
+  const latest = getLatestReadingForUser(userId);
   if (latest) res.write(`data: ${JSON.stringify(latest)}\n\n`);
 
-  sseClients.add(res);
+  // Register in per-user client map
+  if (!sseClients.has(userId)) sseClients.set(userId, new Set());
+  sseClients.get(userId).add(res);
+
   const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) {} }, 25000);
-  req.on('close', () => { sseClients.delete(res); clearInterval(heartbeat); });
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    const clients = sseClients.get(userId);
+    if (clients) {
+      clients.delete(res);
+      if (clients.size === 0) sseClients.delete(userId);
+    }
+  });
 });
 
 // ── Latest reading ───────────────────────────────────────────
 app.get('/api/device/latest', requireAuth, (req, res) => {
-  res.json(db.getLatestDeviceReading() || {});
+  res.json(getLatestReadingForUser(req.user.id) || {});
 });
 
 // ── History ──────────────────────────────────────────────────
 app.get('/api/device/history', requireAuth, (req, res) => {
   const limit = Math.min(parseInt(req.query.limit || 100), 500);
-  res.json(db.getDeviceReadingHistory(limit));
+  res.json(getReadingsForUser(req.user.id, limit));
 });
 
 // ── Manual pump trigger from dashboard ───────────────────────
@@ -1276,7 +1323,7 @@ app.post('/api/pump/manual', requireAuth, (req, res) => {
 
 // ── Device stats summary ─────────────────────────────────────
 app.get('/api/device/stats', requireAuth, (req, res) => {
-  const history = db.getDeviceReadingHistory(100);
+  const history = getReadingsForUser(req.user.id, 100);
   if (!history.length) return res.json({ count: 0 });
 
   const moistures = history.map(r => r.moisture_pct).filter(v => v > 0);
