@@ -163,7 +163,24 @@ export default function LivePage({ isGuest, onAddToast }) {
 
   useEffect(() => {
     api.getDevices().then(setDevices).catch(() => {});
-    api.getDeviceHistory(100).then(h => setHistory(h || [])).catch(() => {});
+    api.getDeviceHistory(100).then(h => {
+      const rows = h || [];
+      setHistory(rows);
+      // Seed live with the most recent reading that has an image,
+      // so the photo is visible immediately while waiting for next SSE push
+      if (rows.length > 0) {
+        const withImg = rows.find(r => r.image_path);
+        const latest  = rows[0];
+        if (withImg && withImg.id !== latest.id) {
+          // Merge: latest sensor values + last known image
+          setLive({ ...latest, image_path: withImg.image_path,
+            ai_visual_status: latest.ai_visual_status ?? withImg.ai_visual_status,
+            ai_growth_stage:  latest.ai_growth_stage  ?? withImg.ai_growth_stage });
+        } else {
+          setLive(latest);
+        }
+      }
+    }).catch(() => {});
     api.getDeviceStats().then(setStats).catch(() => {});
     connectSSE();
     return () => { if (esRef.current) esRef.current.close(); };
@@ -181,8 +198,18 @@ export default function LivePage({ isGuest, onAddToast }) {
         const data = JSON.parse(e.data);
         setSelectedDeviceId(sel => {
           if (sel === 'all' || !sel || data.device_id === sel || (!data.device_id && sel === 'legacy')) {
-            setLive(data);
-            setImgError(false);
+            setLive(prev => {
+              // Keep previous image + AI fields until a new image arrives
+              const merged = { ...data };
+              if (!merged.image_path && prev?.image_path) {
+                merged.image_path      = prev.image_path;
+                merged.ai_visual_status = merged.ai_visual_status ?? prev.ai_visual_status;
+                merged.ai_growth_stage  = merged.ai_growth_stage  ?? prev.ai_growth_stage;
+              }
+              return merged;
+            });
+            // Only reset image error when the image actually changes
+            if (data.image_path) setImgError(false);
           }
           return sel;
         });
