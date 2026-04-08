@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getFarmStatus, sendSlavePumpCommand } from '../api';
+import { getFarmStatus, sendSlavePumpCommand, getDevices } from '../api';
 
 // ─── health helpers ───────────────────────────────────────────
 const moistureColor = (pct) => {
@@ -284,17 +284,28 @@ function ZoneCard({ zone, deviceKey, onPumpCommand, isMaster }) {
 
 // ─── Main FarmDashboard ───────────────────────────────────────
 export default function FarmDashboard() {
-  const [farmData, setFarmData] = useState(null);
-  const [loading,  setLoading]  = useState(true);
-  const [error,    setError]    = useState('');
-  const [lastRefresh, setLastRefresh] = useState(null);
+  const [farmData,       setFarmData]       = useState(null);
+  const [loading,        setLoading]        = useState(true);
+  const [error,          setError]          = useState('');
+  const [lastRefresh,    setLastRefresh]    = useState(null);
+  const [devices,        setDevices]        = useState([]);
+  const [selectedKey,    setSelectedKey]    = useState(null); // device_key chosen by user
 
-  // Hardcoded device key — same as used in PlantZonesPage
-  const DEVICE_KEY = 'piq-1D7ADC-E53119';
+  // Load user's own devices on mount, then auto-select the first one
+  useEffect(() => {
+    getDevices()
+      .then(list => {
+        setDevices(list || []);
+        if (list && list.length > 0) setSelectedKey(list[0].device_key);
+        else setLoading(false); // no devices — stop spinner
+      })
+      .catch(() => { setLoading(false); setError('Could not load your devices.'); });
+  }, []);
 
   const load = useCallback(async () => {
+    if (!selectedKey) return;
     try {
-      const data = await getFarmStatus(DEVICE_KEY);
+      const data = await getFarmStatus(selectedKey);
       setFarmData(data);
       setLastRefresh(new Date());
       setError('');
@@ -303,13 +314,15 @@ export default function FarmDashboard() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [selectedKey]);
 
   useEffect(() => {
+    if (!selectedKey) return;
+    setLoading(true);
     load();
     const interval = setInterval(load, 15000); // refresh every 15s
     return () => clearInterval(interval);
-  }, [load]);
+  }, [load, selectedKey]);
 
   const badge = farmData?.overall_health ? healthBadge(farmData.overall_health) : null;
 
@@ -330,7 +343,23 @@ export default function FarmDashboard() {
               Master + Slave zone monitoring — real-time via ESP-NOW
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+            {/* Device selector — shows user's own registered devices */}
+            {devices.length > 1 && (
+              <select
+                value={selectedKey || ''}
+                onChange={e => setSelectedKey(e.target.value)}
+                style={{
+                  background: 'rgba(255,255,255,0.07)', border: '1px solid rgba(151,188,98,0.3)',
+                  color: '#e2e8f0', borderRadius: 20, padding: '8px 16px',
+                  fontSize: 13, cursor: 'pointer', outline: 'none',
+                }}
+              >
+                {devices.map(d => (
+                  <option key={d.id} value={d.device_key}>{d.name}</option>
+                ))}
+              </select>
+            )}
             {badge && (
               <div style={{
                 background: badge.bg, border: `1px solid ${badge.border}`,
@@ -425,7 +454,7 @@ export default function FarmDashboard() {
                 </div>
                 <ZoneCard
                   zone={zone}
-                  deviceKey={DEVICE_KEY}
+                  deviceKey={selectedKey}
                   onPumpCommand={load}
                   isMaster={true}
                 />
@@ -447,7 +476,7 @@ export default function FarmDashboard() {
                     <ZoneCard
                       key={zone.slave_id}
                       zone={zone}
-                      deviceKey={DEVICE_KEY}
+                      deviceKey={selectedKey}
                       onPumpCommand={load}
                       isMaster={false}
                     />

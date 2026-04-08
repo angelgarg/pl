@@ -1254,25 +1254,32 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
 // GET /api/farm/status?device_key=xxx
 // Returns master + all slave zone data for a device
 app.get('/api/farm/status', requireAuth, (req, res) => {
-  const deviceKey = req.query.device_key || req.user?.device_key;
+  const deviceKey = req.query.device_key;
   if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  // Ownership check — must be the requesting user's device
+  const device = db.findDeviceByKey(deviceKey);
+  if (!device || device.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
   const status = getFarmStatus(deviceKey);
   if (!status) return res.json({ zones: [], total_zones: 0, slave_count: 0, message: 'No data yet — waiting for device to report' });
   res.json(status);
 });
 
-// GET /api/farm/all  (admin — all devices with slave data)
+// GET /api/farm/all  — all farm devices belonging to the requesting user
 app.get('/api/farm/all', requireAuth, (req, res) => {
-  const devices = getAllFarmDevices();
-  const result = devices.map(key => getFarmStatus(key)).filter(Boolean);
+  const userDeviceKeys = db.findDevicesByUserId(req.user.id).map(d => d.device_key).filter(Boolean);
+  const result = userDeviceKeys.map(key => getFarmStatus(key)).filter(Boolean);
   res.json(result);
 });
 
 // POST /api/farm/pump-command  — manual pump for a specific slave zone
 // Body: { device_key, slave_id, pump_on, pump_ms }
 app.post('/api/farm/pump-command', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot send pump commands' });
   const { device_key, slave_id, pump_on, pump_ms } = req.body;
   if (!device_key || !slave_id) return res.status(400).json({ error: 'device_key and slave_id required' });
+  // Ownership check — must be the requesting user's device
+  const device = db.findDeviceByKey(device_key);
+  if (!device || device.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
   // Store command — master will pick it up on next poll
   if (!global._slavePumpCommands) global._slavePumpCommands = {};
   if (!global._slavePumpCommands[device_key]) global._slavePumpCommands[device_key] = {};
@@ -1432,10 +1439,8 @@ app.delete('/api/fields/:id', requireAuth, (req, res) => {
 app.get('/api/fields/:fieldId/devices', requireAuth, (req, res) => {
   const field = db.findFieldById(req.params.fieldId);
   if (!field || field.user_id !== req.user.id) return res.status(404).json({ error: 'Field not found' });
-  const devices = db.findDevicesByFieldId(field.id).map(d => ({
-    ...d,
-    device_key: undefined  // never expose key in list
-  }));
+  // device_key included — these belong to the authenticated user's field
+  const devices = db.findDevicesByFieldId(field.id);
   res.json(devices);
 });
 
@@ -1479,10 +1484,9 @@ app.post('/api/devices', requireAuth, (req, res) => {
 });
 
 app.get('/api/devices', requireAuth, (req, res) => {
-  const devices = db.findDevicesByUserId(req.user.id).map(d => ({
-    ...d,
-    device_key: undefined  // never expose key in list
-  }));
+  // device_key IS included — user owns these devices and needs the key
+  // to configure firmware and call device-specific APIs (farm/status, etc.)
+  const devices = db.findDevicesByUserId(req.user.id);
   res.json(devices);
 });
 
@@ -1870,6 +1874,8 @@ app.post('/api/chat', requireAuth, chatLimit, async (req, res) => {
 app.get('/api/zones/latest', requireAuth, async (req, res) => {
   const deviceKey = req.query.device_key;
   if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  const device = db.findDeviceByKey(deviceKey);
+  if (!device || device.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
   const latest = getLatestZones(deviceKey);
   if (!latest) return res.status(404).json({ error: 'No zone data yet for this device' });
   res.json(latest);
@@ -1880,6 +1886,8 @@ app.get('/api/zones/latest', requireAuth, async (req, res) => {
 app.get('/api/zones/daily-report', requireAuth, async (req, res) => {
   const deviceKey = req.query.device_key;
   if (!deviceKey) return res.status(400).json({ error: 'device_key required' });
+  const device = db.findDeviceByKey(deviceKey);
+  if (!device || device.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
   const report = getDailyReport(deviceKey);
   if (!report) {
     return res.status(404).json({
@@ -1893,9 +1901,13 @@ app.get('/api/zones/daily-report', requireAuth, async (req, res) => {
 // POST /api/zones/generate-report?device_key=piq-xxx
 // Manually trigger daily report generation (for testing)
 app.post('/api/zones/generate-report', requireAuth, async (req, res) => {
+  const deviceKey = req.query.device_key;
+  if (deviceKey) {
+    const device = db.findDeviceByKey(deviceKey);
+    if (!device || device.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
+  }
   try {
     await runDailyReport();
-    const deviceKey = req.query.device_key;
     const report = deviceKey ? getDailyReport(deviceKey) : { message: 'Reports generated for all devices' };
     res.json(report || { message: 'Generated — check /api/zones/daily-report' });
   } catch (err) {
