@@ -1069,7 +1069,10 @@ function getReadingsForUser(userId, limit = 100) {
 function store_device_readings_for_user(deviceIds, limit) {
   const set = new Set(deviceIds);
   const results = [];
-  for (const r of db.getDeviceReadings()) {
+  const all = db.getDeviceReadings();
+  // Iterate newest-first (array is in insertion order — reverse gives latest at top)
+  for (let i = all.length - 1; i >= 0; i--) {
+    const r = all[i];
     if (set.has(r.device_id)) {
       results.push(r);
       if (results.length >= limit) break;
