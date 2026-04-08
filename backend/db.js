@@ -333,6 +333,12 @@ function createDeviceReading(data) {
     ai_animal_threat:   data.ai_animal_threat   ?? 'none',
     pump_activated:     data.pump_activated     ?? false,
     pump_duration_ms:   data.pump_duration_ms   ?? 0,
+    // NPK slave data (null if not an NPK reading)
+    npk_n:              data.npk_n              ?? null,
+    npk_p:              data.npk_p              ?? null,
+    npk_k:              data.npk_k              ?? null,
+    soil_ph:            data.soil_ph            ?? null,
+    soil_ec:            data.soil_ec            ?? null,
     created_at:         new Date().toISOString()
   };
   store.device_readings.unshift(reading); // newest first

@@ -51,40 +51,56 @@ struct OfflineReading {
   bool used;
 };
 
-// ── ESP-NOW Packet Structures (must match slave_monitor.ino) ──
+// ── ESP-NOW Packet Structures (must match slave_monitor.ino AND slave_npk.ino) ──
+#define SLAVE_TYPE_SOIL  0
+#define SLAVE_TYPE_NPK   1
 
 typedef struct SensorPacket {
-  char slave_id[16];
-  char zone_name[32];
-  int  moisture_pct;
-  float temperature_c;
-  bool emergency_valve;    // true if slave already fired emergency valve locally
+  char     slave_id[16];
+  char     zone_name[32];
+  uint8_t  slave_type;       // SLAVE_TYPE_SOIL=0, SLAVE_TYPE_NPK=1
+  int      moisture_pct;     // soil moisture (SOIL slave); 0 for NPK slave
+  float    temperature_c;
+  bool     emergency_valve;
   uint32_t uptime_s;
-  float land_area_acres;   // zone land size in acres (sent from slave config)
+  float    land_area_acres;
+  // NPK fields — 0 for SOIL slave
+  uint16_t npk_n;            // Nitrogen   mg/kg
+  uint16_t npk_p;            // Phosphorus mg/kg
+  uint16_t npk_k;            // Potassium  mg/kg
+  float    soil_ph;          // soil pH    (7-in-1 NPK only)
+  float    soil_ec;          // EC μS/cm   (7-in-1 NPK only)
 } SensorPacket;
 
 typedef struct CommandPacket {
-  char slave_id[16];
-  bool valve_on;           // true = open solenoid valve
-  uint32_t valve_ms;       // how long to keep valve open (milliseconds)
-  bool beep;
-  bool allow_water;        // false = night mode — slave must NOT open valve locally
+  char     slave_id[16];
+  bool     valve_on;
+  uint32_t valve_ms;
+  bool     beep;
+  bool     allow_water;      // false = night mode
 } CommandPacket;
 
 // ── Slave registry (up to 10 slaves) ──
 #define MAX_SLAVES 10
 
 struct SlaveRecord {
-  char slave_id[16];
-  char zone_name[32];
-  uint8_t mac[6];
-  int moisture_pct;
-  float temperature_c;
-  bool emergency_valve;   // true if slave already fired emergency valve locally
-  float land_area_acres;
-  uint32_t last_seen;     // millis() of last ESP-NOW packet
-  bool active;
-  bool peer_registered;
+  char     slave_id[16];
+  char     zone_name[32];
+  uint8_t  mac[6];
+  uint8_t  slave_type;       // SLAVE_TYPE_SOIL or SLAVE_TYPE_NPK
+  int      moisture_pct;
+  float    temperature_c;
+  bool     emergency_valve;
+  float    land_area_acres;
+  uint32_t last_seen;
+  bool     active;
+  bool     peer_registered;
+  // NPK (only populated for NPK slaves)
+  uint16_t npk_n;
+  uint16_t npk_p;
+  uint16_t npk_k;
+  float    soil_ph;
+  float    soil_ec;
 };
 
 SlaveRecord slaves[MAX_SLAVES];
@@ -113,7 +129,7 @@ void setupWiFiNetworks() {
 }
 
 #define BACKEND_URL  "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
-#define DEVICE_KEY   "piq-1D7ADC-E53119"             // ← from BhoomiIQ dashboard
+#define DEVICE_KEY   "piq-FA20E3-2D352D"             // ← from BhoomiIQ dashboard
 
 #define SENSOR_INTERVAL_S        60      // read sensors + check emergency every 60s (day & night)
 #define CLOUD_REPORT_INTERVAL_H  3       // send AI report every 3 hours (daytime only)
@@ -385,16 +401,27 @@ void onSlaveData(const uint8_t *mac, const uint8_t *data, int len) {
   portENTER_CRITICAL(&slaveMux);
   strncpy(slaves[idx].slave_id,  pkt.slave_id,  15);
   strncpy(slaves[idx].zone_name, pkt.zone_name, 31);
+  slaves[idx].slave_type      = pkt.slave_type;
   slaves[idx].moisture_pct    = pkt.moisture_pct;
   slaves[idx].temperature_c   = pkt.temperature_c;
   slaves[idx].emergency_valve = pkt.emergency_valve;
   slaves[idx].land_area_acres = pkt.land_area_acres;
+  slaves[idx].npk_n           = pkt.npk_n;
+  slaves[idx].npk_p           = pkt.npk_p;
+  slaves[idx].npk_k           = pkt.npk_k;
+  slaves[idx].soil_ph         = pkt.soil_ph;
+  slaves[idx].soil_ec         = pkt.soil_ec;
   slaves[idx].last_seen       = millis();
   slaves[idx].active          = true;
   portEXIT_CRITICAL(&slaveMux);
 
-  Serial.printf("[ESPNOW] ← %s | moisture=%d%% temp=%.1fC\n",
-    pkt.slave_id, pkt.moisture_pct, pkt.temperature_c);
+  if (pkt.slave_type == SLAVE_TYPE_NPK) {
+    Serial.printf("[ESPNOW] ← %s [NPK] | N=%u P=%u K=%u mg/kg | pH=%.1f EC=%.0f\n",
+      pkt.slave_id, pkt.npk_n, pkt.npk_p, pkt.npk_k, pkt.soil_ph, pkt.soil_ec);
+  } else {
+    Serial.printf("[ESPNOW] ← %s [SOIL] | moisture=%d%% temp=%.1fC\n",
+      pkt.slave_id, pkt.moisture_pct, pkt.temperature_c);
+  }
 
   // Register slave as peer if not yet done (so we can send commands back)
   if (!slaves[idx].peer_registered) {
@@ -452,21 +479,30 @@ void processSlaveCommands() {
   }
 }
 
-// Build slaves JSON array for HTTP report
+// Build slaves JSON array for HTTP report (includes NPK fields for NPK slaves)
 String buildSlavesJson() {
   String json = "[";
+  bool first = true;
   for (int i = 0; i < slaveCount; i++) {
     if (!slaves[i].active) continue;
-    if (i > 0) json += ",";
+    if (!first) json += ",";
+    first = false;
     bool online = (millis() - slaves[i].last_seen) < 120000; // 2 min timeout
     json += "{";
     json += "\"slave_id\":\"" + String(slaves[i].slave_id) + "\",";
     json += "\"zone_name\":\"" + String(slaves[i].zone_name) + "\",";
+    json += "\"slave_type\":" + String(slaves[i].slave_type) + ",";
     json += "\"moisture_pct\":" + String(slaves[i].moisture_pct) + ",";
     json += "\"temperature_c\":" + String(slaves[i].temperature_c, 1) + ",";
     json += "\"land_area_acres\":" + String(slaves[i].land_area_acres, 2) + ",";
     json += "\"online\":" + String(online ? "true" : "false") + ",";
     json += "\"last_seen_s\":" + String((millis() - slaves[i].last_seen) / 1000);
+    // Include NPK fields (0 for SOIL slaves — backend ignores zeros)
+    json += ",\"npk_n\":" + String(slaves[i].npk_n);
+    json += ",\"npk_p\":" + String(slaves[i].npk_p);
+    json += ",\"npk_k\":" + String(slaves[i].npk_k);
+    json += ",\"soil_ph\":" + String(slaves[i].soil_ph, 1);
+    json += ",\"soil_ec\":" + String(slaves[i].soil_ec, 0);
     json += "}";
   }
   json += "]";

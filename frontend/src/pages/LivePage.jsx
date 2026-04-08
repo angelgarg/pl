@@ -47,6 +47,26 @@ function timeAgo(iso) {
   return `${Math.floor(sec / 3600)} ghante pehle`;
 }
 
+// ─── NPK helpers ─────────────────────────────────────────────
+
+function npkLevel(val, low, ok) {
+  if (val == null) return null;
+  if (val < low)  return 'kam';
+  if (val < ok)   return 'theek';
+  return 'achha';
+}
+function npkColor(val, low, ok) {
+  const lvl = npkLevel(val, low, ok);
+  return lvl === 'achha' ? '#22c55e' : lvl === 'theek' ? '#eab308' : '#ef4444';
+}
+function npkAdvice(n, p, k) {
+  const tips = [];
+  if (n != null && n < 50)  tips.push('🌾 N kam hai — Urea daalo');
+  if (p != null && p < 25)  tips.push('🟤 P kam hai — DAP khad daalo');
+  if (k != null && k < 100) tips.push('🟡 K kam hai — MOP daalo');
+  return tips;
+}
+
 // ─── Desi status labels ───────────────────────────────────────
 
 function moistureStatus(pct) {
@@ -330,6 +350,91 @@ export default function LivePage({ isGuest, onAddToast }) {
               </div>
             </div>
           </div>
+
+          {/* ── NPK card (shown only when slave sends NPK data) ── */}
+          {(live.npk_n > 0 || live.npk_p > 0 || live.npk_k > 0) && (
+            <div className="live-card live-card-desi npk-card">
+              <div className="live-card-header live-card-header-npk">
+                <span>🧪 Mitti ki Jaanch (NPK)</span>
+                <span className="live-timestamp">{timeAgo(live.created_at)}</span>
+              </div>
+              <div className="npk-tiles-row">
+                {/* N */}
+                <div className="npk-tile">
+                  <div className="npk-tile-symbol" style={{ color: npkColor(live.npk_n, 50, 120) }}>N</div>
+                  <div className="npk-tile-val" style={{ color: npkColor(live.npk_n, 50, 120) }}>
+                    {live.npk_n != null ? live.npk_n : '--'}
+                  </div>
+                  <div className="npk-tile-unit">mg/kg</div>
+                  <div className="npk-tile-label">Naajuk / Nitrogen</div>
+                  <div className="npk-tile-badge" style={{ background: npkColor(live.npk_n, 50, 120) + '22', color: npkColor(live.npk_n, 50, 120) }}>
+                    {npkLevel(live.npk_n, 50, 120) === 'kam' ? '⬇ Kam' : npkLevel(live.npk_n, 50, 120) === 'theek' ? '✓ Theek' : '↑ Achha'}
+                  </div>
+                </div>
+                {/* P */}
+                <div className="npk-tile">
+                  <div className="npk-tile-symbol" style={{ color: npkColor(live.npk_p, 25, 60) }}>P</div>
+                  <div className="npk-tile-val" style={{ color: npkColor(live.npk_p, 25, 60) }}>
+                    {live.npk_p != null ? live.npk_p : '--'}
+                  </div>
+                  <div className="npk-tile-unit">mg/kg</div>
+                  <div className="npk-tile-label">Phosphorus</div>
+                  <div className="npk-tile-badge" style={{ background: npkColor(live.npk_p, 25, 60) + '22', color: npkColor(live.npk_p, 25, 60) }}>
+                    {npkLevel(live.npk_p, 25, 60) === 'kam' ? '⬇ Kam' : npkLevel(live.npk_p, 25, 60) === 'theek' ? '✓ Theek' : '↑ Achha'}
+                  </div>
+                </div>
+                {/* K */}
+                <div className="npk-tile">
+                  <div className="npk-tile-symbol" style={{ color: npkColor(live.npk_k, 100, 200) }}>K</div>
+                  <div className="npk-tile-val" style={{ color: npkColor(live.npk_k, 100, 200) }}>
+                    {live.npk_k != null ? live.npk_k : '--'}
+                  </div>
+                  <div className="npk-tile-unit">mg/kg</div>
+                  <div className="npk-tile-label">Potassium</div>
+                  <div className="npk-tile-badge" style={{ background: npkColor(live.npk_k, 100, 200) + '22', color: npkColor(live.npk_k, 100, 200) }}>
+                    {npkLevel(live.npk_k, 100, 200) === 'kam' ? '⬇ Kam' : npkLevel(live.npk_k, 100, 200) === 'theek' ? '✓ Theek' : '↑ Achha'}
+                  </div>
+                </div>
+                {/* pH — 7-in-1 sensor only */}
+                {live.soil_ph > 0 && (
+                  <div className="npk-tile">
+                    <div className="npk-tile-symbol" style={{ color: '#a855f7' }}>pH</div>
+                    <div className="npk-tile-val" style={{ color: '#a855f7' }}>
+                      {(live.soil_ph / 10).toFixed(1)}
+                    </div>
+                    <div className="npk-tile-unit">pH units</div>
+                    <div className="npk-tile-label">Mitti ka pH</div>
+                    <div className="npk-tile-badge" style={{ background: '#a855f722', color: '#a855f7' }}>
+                      {live.soil_ph / 10 < 6 ? '⬇ Tezaabi' : live.soil_ph / 10 > 7.5 ? '↑ Khaari' : '✓ Sahi'}
+                    </div>
+                  </div>
+                )}
+                {/* EC — 7-in-1 sensor only */}
+                {live.soil_ec > 0 && (
+                  <div className="npk-tile">
+                    <div className="npk-tile-symbol" style={{ color: '#eab308' }}>EC</div>
+                    <div className="npk-tile-val" style={{ color: '#eab308' }}>
+                      {live.soil_ec}
+                    </div>
+                    <div className="npk-tile-unit">μS/cm</div>
+                    <div className="npk-tile-label">Chal-Vidyut</div>
+                    <div className="npk-tile-badge" style={{ background: '#eab30822', color: '#eab308' }}>
+                      {live.soil_ec > 2000 ? '↑ Zyada Namak' : live.soil_ec < 200 ? '⬇ Poshan Kam' : '✓ Sahi'}
+                    </div>
+                  </div>
+                )}
+              </div>
+              {/* Advice row */}
+              {npkAdvice(live.npk_n, live.npk_p, live.npk_k).length > 0 && (
+                <div className="npk-advice-row">
+                  <div className="npk-advice-title">💡 Salah:</div>
+                  {npkAdvice(live.npk_n, live.npk_p, live.npk_k).map((tip, i) => (
+                    <div key={i} className="npk-advice-pill">{tip}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* ── AI Report card ── */}
           <div className="live-card live-card-desi ai-card">

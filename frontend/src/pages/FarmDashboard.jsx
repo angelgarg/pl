@@ -176,6 +176,71 @@ function ZoneCard({ zone, deviceKey, onPumpCommand, isMaster }) {
         </div>
       </div>
 
+      {/* NPK panel — shown only for NPK slaves */}
+      {zone.slave_type === 1 && (zone.npk_n > 0 || zone.npk_p > 0 || zone.npk_k > 0) && (
+        <div style={{
+          marginTop: 16,
+          background: 'rgba(16,185,129,0.06)',
+          border: '1px solid rgba(16,185,129,0.2)',
+          borderRadius: 12,
+          padding: '12px 14px',
+        }}>
+          <div style={{ fontSize: 11, color: '#34d399', fontWeight: 700, marginBottom: 10, letterSpacing: '0.5px' }}>
+            🧪 SOIL NUTRIENTS (mg/kg)
+          </div>
+          <div style={{ display: 'flex', gap: 10 }}>
+            {[
+              { label: 'N', sub: 'Nitrogen',    value: zone.npk_n, color: '#4ade80' },
+              { label: 'P', sub: 'Phosphorus',  value: zone.npk_p, color: '#60a5fa' },
+              { label: 'K', sub: 'Potassium',   value: zone.npk_k, color: '#fbbf24' },
+            ].map(n => (
+              <div key={n.label} style={{
+                flex: 1, textAlign: 'center',
+                background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 4px',
+                border: `1px solid ${n.color}22`,
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: n.color }}>{n.value ?? '—'}</div>
+                <div style={{ fontSize: 11, color: n.color, fontWeight: 700 }}>{n.label}</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 1 }}>{n.sub}</div>
+              </div>
+            ))}
+            {zone.soil_ph > 0 && (
+              <div style={{
+                flex: 1, textAlign: 'center',
+                background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 4px',
+                border: '1px solid rgba(167,139,250,0.2)',
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#c4b5fd' }}>{zone.soil_ph?.toFixed(1)}</div>
+                <div style={{ fontSize: 11, color: '#c4b5fd', fontWeight: 700 }}>pH</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 1 }}>Acidity</div>
+              </div>
+            )}
+            {zone.soil_ec > 0 && (
+              <div style={{
+                flex: 1, textAlign: 'center',
+                background: 'rgba(255,255,255,0.04)', borderRadius: 8, padding: '8px 4px',
+                border: '1px solid rgba(251,191,36,0.2)',
+              }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: '#fde68a' }}>{Math.round(zone.soil_ec)}</div>
+                <div style={{ fontSize: 11, color: '#fde68a', fontWeight: 700 }}>EC</div>
+                <div style={{ fontSize: 9, color: 'rgba(255,255,255,0.35)', marginTop: 1 }}>μS/cm</div>
+              </div>
+            )}
+          </div>
+          {/* NPK interpretation */}
+          <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5 }}>
+            {zone.npk_n < 50  ? '⚠️ Low Nitrogen — consider urea' :
+             zone.npk_n > 200 ? '✅ Nitrogen sufficient' : '🟡 Nitrogen moderate'}
+            {' · '}
+            {zone.npk_p < 25  ? '⚠️ Low Phosphorus — add DAP' :
+             zone.npk_p > 100 ? '✅ Phosphorus good' : '🟡 Phosphorus ok'}
+            {' · '}
+            {zone.npk_k < 100 ? '⚠️ Low Potassium — add MOP' :
+             zone.npk_k > 300 ? '✅ Potassium high' : '✅ Potassium good'}
+          </div>
+        </div>
+      )}
+
       {/* Expanded pump controls */}
       {expanded && (
         <div onClick={e => e.stopPropagation()}

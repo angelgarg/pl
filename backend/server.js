@@ -1154,11 +1154,27 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
   }
 
   // Parse slave zone data piggybacked in x-slaves-json header
+  // Also extract NPK values from any NPK slave (slave_type === 1)
+  let npkFromSlave = null;
   const slavesHeader = req.headers['x-slaves-json'];
   if (slavesHeader) {
     try {
       const slavesArr = JSON.parse(slavesHeader);
       const deviceKey = req.deviceRecord?.device_key || req.headers['x-device-key'] || 'unknown';
+
+      // Find the first online NPK slave and pull its values
+      const npkSlave = slavesArr.find(s => s.slave_type === 1 && s.online !== false);
+      if (npkSlave && (npkSlave.npk_n > 0 || npkSlave.npk_p > 0 || npkSlave.npk_k > 0)) {
+        npkFromSlave = {
+          npk_n:   npkSlave.npk_n   || null,
+          npk_p:   npkSlave.npk_p   || null,
+          npk_k:   npkSlave.npk_k   || null,
+          soil_ph: npkSlave.soil_ph || null,
+          soil_ec: npkSlave.soil_ec || null,
+        };
+        console.log(`[NPK] ${npkSlave.slave_id} → N=${npkSlave.npk_n} P=${npkSlave.npk_p} K=${npkSlave.npk_k} mg/kg`);
+      }
+
       updateFarmData(deviceKey, {
         moisture_pct,
         temperature_c,
@@ -1204,7 +1220,9 @@ app.post('/api/device-report', requireDevice, async (req, res) => {
     ai_animal_type:       aiResult.animal_type        || 'none',
     ai_animal_threat:     aiResult.animal_threat_level || 'none',
     pump_activated,
-    pump_duration_ms: pump_activated ? pump_duration_ms : 0
+    pump_duration_ms: pump_activated ? pump_duration_ms : 0,
+    // NPK values from NPK slave (null if no NPK slave reported this cycle)
+    ...(npkFromSlave || {})
   });
 
   // Push to the device owner's live-stream clients only

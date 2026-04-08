@@ -86,27 +86,36 @@ uint8_t MASTER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // ← REPLACE WITH
 
 // ─────────────────────────────────────────────────────────────
 //  ESP-NOW PACKET STRUCTURES
-//  Must be identical on master and slave
+//  Must be IDENTICAL on master, soil slave, and NPK slave
 // ─────────────────────────────────────────────────────────────
+#define SLAVE_TYPE_SOIL  0
+#define SLAVE_TYPE_NPK   1
 
 // Slave → Master: sensor data packet
 typedef struct SensorPacket {
-  char slave_id[16];       // e.g. "ZONE_01"
-  char zone_name[32];      // e.g. "Tomatoes"
-  int  moisture_pct;       // 0–100
-  float temperature_c;     // e.g. 28.5
-  bool emergency_valve;    // true if slave already opened emergency valve locally
-  uint32_t uptime_s;       // seconds since boot
-  float land_area_acres;   // zone land area in acres (set via ZONE_AREA_ACRES)
+  char     slave_id[16];      // e.g. "COLGARDEN_01"
+  char     zone_name[32];     // e.g. "College Garden A"
+  uint8_t  slave_type;        // SLAVE_TYPE_SOIL=0, SLAVE_TYPE_NPK=1
+  int      moisture_pct;      // 0–100 (soil slave only; 0 for NPK slave)
+  float    temperature_c;     // DS18B20 reading
+  bool     emergency_valve;   // true if slave already opened emergency valve locally
+  uint32_t uptime_s;          // seconds since boot
+  float    land_area_acres;   // zone land area in acres
+  // NPK fields — soil slave always sends 0 for these
+  uint16_t npk_n;             // Nitrogen   mg/kg (NPK slave only)
+  uint16_t npk_p;             // Phosphorus mg/kg (NPK slave only)
+  uint16_t npk_k;             // Potassium  mg/kg (NPK slave only)
+  float    soil_ph;           // soil pH    (NPK 7-in-1 only; 0 otherwise)
+  float    soil_ec;           // EC μS/cm   (NPK 7-in-1 only; 0 otherwise)
 } SensorPacket;
 
 // Master → Slave: solenoid valve command packet
 typedef struct CommandPacket {
-  char slave_id[16];       // target slave
-  bool valve_on;           // true = open solenoid valve
-  uint32_t valve_ms;       // how long to keep valve open (milliseconds)
-  bool beep;               // true = beep confirmation
-  bool allow_water;        // false = night mode — suppress local emergency valve
+  char     slave_id[16];      // target slave (or "ALL")
+  bool     valve_on;          // true = open solenoid valve
+  uint32_t valve_ms;          // how long to keep valve open (milliseconds)
+  bool     beep;              // true = beep confirmation
+  bool     allow_water;       // false = night mode — suppress local emergency valve
 } CommandPacket;
 
 // ─────────────────────────────────────────────────────────────
@@ -250,13 +259,16 @@ bool initESPNOW() {
 // ─────────────────────────────────────────────────────────────
 bool sendToMaster(int moisture, float tempC, bool emergencyPump) {
   SensorPacket pkt;
+  memset(&pkt, 0, sizeof(pkt));   // zero all fields including NPK (important!)
   strncpy(pkt.slave_id,   SLAVE_ID,   sizeof(pkt.slave_id) - 1);
   strncpy(pkt.zone_name,  ZONE_NAME,  sizeof(pkt.zone_name) - 1);
+  pkt.slave_type      = SLAVE_TYPE_SOIL;
   pkt.moisture_pct    = moisture;
   pkt.temperature_c   = tempC;
-  pkt.emergency_valve = emergencyPump; // field renamed; parameter kept same for clarity
+  pkt.emergency_valve = emergencyPump;
   pkt.uptime_s        = millis() / 1000;
   pkt.land_area_acres = ZONE_AREA_ACRES;
+  // NPK fields already zeroed by memset
 
   sendSuccess = false;
   esp_err_t result = esp_now_send(MASTER_MAC, (uint8_t*)&pkt, sizeof(pkt));
