@@ -340,26 +340,59 @@ cfg.pin_reset=CAM_RESET_PIN;
 cfg.xclk_freq_hz=20000000;
 cfg.pixel_format=PIXFORMAT_JPEG;
 
-// Keep image small for reliable SSL upload over WiFi
-// VGA (640x480) was causing -3 send failures — QVGA (320x240) is much more stable
+// PSRAM boards: VGA (640×480) — timeout is now 60s so it handles the larger payload
+// No-PSRAM boards: QVGA (320×240) — limited heap, keep it safe
 if(psramFound()){
-cfg.frame_size=FRAMESIZE_QVGA;
-cfg.jpeg_quality=15;  // 15 = good quality, ~15-25KB — reliable over SSL
-cfg.fb_count=2;
+  cfg.frame_size  = FRAMESIZE_VGA;   // 640×480 — 4× sharper than QVGA
+  cfg.jpeg_quality= 10;              // 0=best 63=worst; 10 gives ~35-55 KB at VGA
+  cfg.fb_count    = 2;
 }
 else{
-cfg.frame_size=FRAMESIZE_QVGA;
-cfg.jpeg_quality=18;
-cfg.fb_count=1;
+  cfg.frame_size  = FRAMESIZE_QVGA;
+  cfg.jpeg_quality= 12;              // slightly better quality than before
+  cfg.fb_count    = 1;
 }
 
 if(esp_camera_init(&cfg)!=ESP_OK){
-Serial.println("[CAM] Init FAILED");
-return false;
+  Serial.println("[CAM] Init FAILED");
+  return false;
 }
 
-camera_fb_t *fb=esp_camera_fb_get();
-if(fb)esp_camera_fb_return(fb);
+// ── OV2640 sensor fine-tuning ──────────────────────────────────
+// These settings dramatically improve colour accuracy and sharpness
+// compared to the OV2640 defaults
+sensor_t *s = esp_camera_sensor_get();
+if(s){
+  s->set_brightness(s, 1);      // -2..2   — slight boost for indoor/shade
+  s->set_contrast(s, 1);        // -2..2   — punchier greens
+  s->set_saturation(s, 1);      // -2..2   — richer plant colours
+  s->set_sharpness(s, 2);       // -2..2   — crisper leaf edges
+  s->set_denoise(s, 1);         // 0|1     — reduce sensor noise
+  s->set_whitebal(s, 1);        // AWB on  — natural colour temp
+  s->set_awb_gain(s, 1);        // AWB gain on
+  s->set_wb_mode(s, 0);         // 0=auto, 1=sunny, 2=cloudy, 3=office, 4=home
+  s->set_exposure_ctrl(s, 1);   // AEC on  — auto exposure
+  s->set_aec2(s, 1);            // AEC DSP on for better low-light
+  s->set_ae_level(s, 0);        // AEC bias 0 (neutral)
+  s->set_gain_ctrl(s, 1);       // AGC on
+  s->set_agc_gain(s, 0);        // let AGC pick
+  s->set_gainceiling(s, (gainceiling_t)2); // max 2× gain — keeps noise low
+  s->set_bpc(s, 1);             // bad pixel correction
+  s->set_wpc(s, 1);             // white pixel correction
+  s->set_raw_gma(s, 1);         // raw gamma on — better dynamic range
+  s->set_lenc(s, 1);            // lens correction — even brightness across frame
+  s->set_hmirror(s, 0);         // set 1 if image appears mirrored
+  s->set_vflip(s, 0);           // set 1 if image appears upside-down
+  Serial.println("[CAM] Sensor tuning applied");
+}
+
+// Discard first 3 frames — OV2640 needs a few frames to settle
+// AGC and AWB after a cold start
+for(int w=0;w<3;w++){
+  camera_fb_t *wb = esp_camera_fb_get();
+  if(wb) esp_camera_fb_return(wb);
+  delay(100);
+}
 
 Serial.println("[CAM] Ready");
 return true;
