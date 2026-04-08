@@ -1931,25 +1931,27 @@ input:focus, select:focus, textarea:focus {
 
 /* Cards */
 .live-card {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
+  background: linear-gradient(135deg, #16213e 0%, #0f3460 100%);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 16px;
   padding: 20px;
   margin-bottom: 16px;
+  box-shadow: 0 4px 20px rgba(0,0,0,0.3);
 }
 .live-card-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 14px;
   margin-bottom: 14px;
-  color: var(--text-primary);
+  color: #e2e8f0;
+  letter-spacing: 0.2px;
 }
 .live-timestamp {
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 400;
-  color: var(--text-secondary);
+  color: rgba(255,255,255,0.45);
 }
 
 /* Top grid */
@@ -2465,32 +2467,32 @@ input:focus, select:focus, textarea:focus {
 .live-stats-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 14px;
 }
 .live-stat {
   flex: 1;
-  min-width: 100px;
+  min-width: 110px;
   text-align: center;
-  padding: 12px;
-  background: rgba(255,255,255,0.03);
-  border-radius: 10px;
+  padding: 16px 12px;
+  background: rgba(255,255,255,0.04);
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.07);
 }
 .live-stat-val {
   font-size: 26px;
-  font-weight: 700;
-  color: var(--primary-light);
+  font-weight: 800;
+  color: #e2e8f0;
   line-height: 1.1;
 }
 .live-stat-lbl {
-  font-size: 11px;
-  color: var(--text-secondary);
-  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.65);
+  margin-top: 5px;
 }
 
 /* Log table */
-.live-log-table-wrap {
-  overflow-x: auto;
-}
+.live-log-table-wrap { overflow-x: auto; }
 .live-log-table {
   width: 100%;
   border-collapse: collapse;
@@ -2498,18 +2500,35 @@ input:focus, select:focus, textarea:focus {
 }
 .live-log-table th {
   text-align: left;
-  padding: 8px 12px;
-  font-size: 11px;
+  padding: 10px 12px;
+  font-size: 10.5px;
   font-weight: 700;
   text-transform: uppercase;
-  letter-spacing: 0.5px;
-  color: var(--text-secondary);
-  border-bottom: 1px solid var(--border);
+  letter-spacing: 0.7px;
+  color: rgba(255,255,255,0.4);
+  border-bottom: 1px solid rgba(255,255,255,0.07);
+  white-space: nowrap;
 }
 .live-log-table td {
-  padding: 8px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.04);
-  color: var(--text-primary);
+  padding: 9px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  color: rgba(255,255,255,0.82);
+  font-size: 13px;
+}
+.live-log-table tr:last-child td { border-bottom: none; }
+.live-log-table tbody tr:hover { background: rgba(255,255,255,0.04); }
+
+/* Date cell */
+.log-date-cell {
+  font-weight: 700;
+  color: #FFB300 !important;
+  white-space: nowrap;
+  font-size: 12px;
+}
+.log-time-cell {
+  color: rgba(255,255,255,0.65) !important;
+  font-size: 12px;
+  white-space: nowrap;
 }
 
 /* ============================================================
@@ -2645,20 +2664,23 @@ input:focus, select:focus, textarea:focus {
 /* Desi stat cards in summary */
 .live-stat-desi {
   border-radius: 12px;
-  padding: 16px 20px !important;
+  padding: 16px 14px !important;
   border-top: 3px solid transparent;
-  background: rgba(255,255,255,0.04);
+  background: rgba(255,255,255,0.05) !important;
+  backdrop-filter: blur(4px);
 }
-.live-stat-blue   { border-top-color: #3b82f6; }
-.live-stat-green  { border-top-color: #22c55e; }
-.live-stat-orange { border-top-color: #f97316; }
-.live-stat-saffron{ border-top-color: #FF9933; }
+.live-stat-blue    { border-top-color: #60a5fa; }
+.live-stat-green   { border-top-color: #4ade80; }
+.live-stat-orange  { border-top-color: #fb923c; }
+.live-stat-saffron { border-top-color: #FFB300; }
+
+.live-stat-desi .live-stat-val { color: #f1f5f9 !important; }
+.live-stat-desi .live-stat-lbl { color: rgba(255,255,255,0.7) !important; }
 
 .live-stat-sublbl {
   font-size: 10px;
-  color: var(--text-secondary);
-  margin-top: 2px;
-  opacity: 0.6;
+  color: rgba(255,255,255,0.35);
+  margin-top: 3px;
 }
 
 /* Waiting state desi */

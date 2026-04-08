@@ -28,6 +28,17 @@ function fmtTime(iso) {
     timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
   });
 }
+function fmtDateTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  const date = d.toLocaleDateString('en-IN', {
+    timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short'
+  });
+  const time = d.toLocaleTimeString('en-IN', {
+    timeZone: 'Asia/Kolkata', hour: '2-digit', minute: '2-digit', hour12: true
+  });
+  return { date, time };
+}
 function timeAgo(iso) {
   if (!iso) return '';
   const sec = Math.floor((Date.now() - new Date(iso)) / 1000);
@@ -564,6 +575,7 @@ export default function LivePage({ isGuest, onAddToast }) {
               <table className="live-log-table">
                 <thead>
                   <tr>
+                    <th>Tarikh</th>
                     <th>Samay (IST)</th>
                     <th>Nami</th>
                     <th>Garmi</th>
@@ -573,16 +585,20 @@ export default function LivePage({ isGuest, onAddToast }) {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredHistory.slice(0, 20).map(r => (
+                  {filteredHistory.slice(0, 20).map(r => {
+                    const dt = fmtDateTime(r.created_at);
+                    return (
                     <tr key={r.id}>
-                      <td>{fmtTime(r.created_at)}</td>
+                      <td className="log-date-cell">{dt.date}</td>
+                      <td className="log-time-cell">{dt.time}</td>
                       <td>{r.moisture_pct}%</td>
                       <td>{r.temperature_c}°C</td>
                       <td style={{ color: healthColor(r.ai_health_score) }}>{r.ai_health_score ?? '--'}</td>
                       <td><span style={{ color: alertColor(r.ai_alert_level) }}>{alertLabel(r.ai_alert_level)}</span></td>
                       <td>{r.pump_activated ? `✅ ${r.pump_duration_ms / 1000}s` : '—'}</td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
