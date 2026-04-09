@@ -18,18 +18,31 @@ async function verifyPassword(password, stored) {
   return computed.toString('hex') === hash;
 }
 
-// Create token: base64(userId:issuedAt:expiresAt).hmac
+// Create token: base64(JSON payload).hmac
+// Payload includes userId, issuedAt, expiresAt, and token_version (tv)
 // Default expiry: 7 days for regular users, pass expiryMs to override
-function createToken(userId, secret, expiryMs = 7 * 24 * 60 * 60 * 1000) {
+function createToken(userId, secret, expiryMs = 7 * 24 * 60 * 60 * 1000, tokenVersion = 0) {
   const issuedAt  = Date.now();
   const expiresAt = issuedAt + expiryMs;
-  const payload   = `${userId}:${issuedAt}:${expiresAt}`;
+  const payload   = JSON.stringify({ uid: userId, iat: issuedAt, exp: expiresAt, tv: tokenVersion });
   const payloadB64 = Buffer.from(payload).toString('base64');
   const hmac = crypto
     .createHmac('sha256', secret)
     .update(payloadB64)
     .digest('hex');
   return `${payloadB64}.${hmac}`;
+}
+
+// Decode token payload without verification (for reading tv field)
+function decodeToken(token) {
+  try {
+    const [payloadB64] = token.split('.');
+    if (!payloadB64) return null;
+    const raw = Buffer.from(payloadB64, 'base64').toString('utf8');
+    // Support both JSON format (new) and colon-separated (old)
+    if (raw.startsWith('{')) return JSON.parse(raw);
+    return null;
+  } catch (_) { return null; }
 }
 
 // Verify token — returns userId if valid and not expired, else null
@@ -45,16 +58,22 @@ function verifyToken(token, secret) {
 
     if (expectedHmac !== hmac) return null;
 
-    const payload = Buffer.from(payloadB64, 'base64').toString('utf8');
-    const parts   = payload.split(':');
-    const userId  = parts[0];
-    // Support both old format (userId:timestamp) and new format (userId:issuedAt:expiresAt)
+    const raw = Buffer.from(payloadB64, 'base64').toString('utf8');
+    // Support new JSON format and old colon-separated format
+    if (raw.startsWith('{')) {
+      const p = JSON.parse(raw);
+      if (Date.now() > p.exp) return null;
+      return p.uid;
+    }
+    // Legacy colon format: userId:issuedAt:expiresAt
+    const parts = raw.split(':');
+    const userId = parts[0];
     if (parts.length >= 3) {
       const expiresAt = parseInt(parts[2], 10);
-      if (!isNaN(expiresAt) && Date.now() > expiresAt) return null; // expired
+      if (!isNaN(expiresAt) && Date.now() > expiresAt) return null;
     }
     return userId;
-  } catch (err) {
+  } catch (_) {
     return null;
   }
 }
@@ -110,6 +129,7 @@ module.exports = {
   hashPassword,
   verifyPassword,
   createToken,
+  decodeToken,
   verifyToken,
   parseCookies,
   authMiddleware,

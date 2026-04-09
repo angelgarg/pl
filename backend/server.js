@@ -7,7 +7,7 @@ const crypto = require('crypto');
 require('dotenv').config();
 
 const db = require('./db');
-const { hashPassword, verifyPassword, createToken } = require('./auth');
+const { hashPassword, verifyPassword, createToken, decodeToken } = require('./auth');
 const { calculateHealthScore, analyzeImage, analyzeDeviceReport, analyzeMultipleZones } = require('./ai_analysis');
 const { trackNewRegistration } = require('./adminTracking');
 const { generateDailyContent } = require('./socialContent');
@@ -18,7 +18,9 @@ const cloudinary = require('./cloudinary');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const SECRET_KEY = process.env.SECRET_KEY || 'super-secret-dev-key-change-in-production-bhoomiq-2024';
+const SECRET_KEY       = process.env.SECRET_KEY       || 'super-secret-dev-key-change-in-production-bhoomiq-2024';
+// Guest secret is separate — never derivable from SECRET_KEY
+const GUEST_SECRET_KEY = process.env.GUEST_SECRET_KEY || 'bhoomiq-guest-secret-2024-xK9mP3nQ';
 
 // Middleware — allow localhost + any *.vercel.app + optional FRONTEND_URL env var
 const allowedOrigins = [
@@ -33,7 +35,9 @@ const allowedOrigins = [
 app.use(cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin) || /\.vercel\.live$/.test(origin)) {
+    // Only allow exact origins — no wildcard regex that would allow any *.vercel.app
+    const ALLOWED_VERCEL = process.env.FRONTEND_URL || null;
+    if (allowedOrigins.includes(origin) || (ALLOWED_VERCEL && origin === ALLOWED_VERCEL)) {
       return callback(null, true);
     }
     callback(new Error('Not allowed by CORS'));
@@ -48,7 +52,8 @@ app.use(cors({
 app.options('*', cors({
   origin: (origin, callback) => {
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin) || /\.vercel\.live$/.test(origin)) {
+    const ALLOWED_VERCEL = process.env.FRONTEND_URL || null;
+    if (allowedOrigins.includes(origin) || (ALLOWED_VERCEL && origin === ALLOWED_VERCEL)) {
       return callback(null, true);
     }
     callback(new Error('Not allowed by CORS'));
@@ -130,22 +135,27 @@ function extractToken(req) {
 }
 
 // Auth middleware — checks Bearer header first, then cookie
-// Also accepts guest tokens (signed with SECRET_KEY + ':guest')
+// Accepts normal tokens (SECRET_KEY) and guest tokens (GUEST_SECRET_KEY)
 function requireAuth(req, res, next) {
   const token = extractToken(req);
-  if (!token) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
+  if (!token) return res.status(401).json({ error: 'Unauthorized' });
   const { verifyToken } = require('./auth');
-  // Try normal token first, then guest token
-  let userId = verifyToken(token, SECRET_KEY);
+  let userId  = verifyToken(token, SECRET_KEY);
   let isGuest = false;
   if (!userId) {
-    userId = verifyToken(token, SECRET_KEY + ':guest');
+    userId = verifyToken(token, GUEST_SECRET_KEY);
     if (userId) isGuest = true;
   }
-  if (!userId) {
-    return res.status(401).json({ error: 'Invalid token' });
+  if (!userId) return res.status(401).json({ error: 'Invalid token' });
+  // Token-version check — invalidates sessions after password reset
+  if (!isGuest) {
+    const user = db.getUsers().find(u => u.id === userId);
+    if (!user) return res.status(401).json({ error: 'User not found' });
+    const { decodeToken } = require('./auth');
+    const payload = decodeToken(token);
+    if (payload && (payload.tv || 0) < (user.token_version || 0)) {
+      return res.status(401).json({ error: 'Session expired — please log in again' });
+    }
   }
   req.user = { id: userId, isGuest };
   next();
@@ -156,10 +166,10 @@ function optionalAuthCheck(req, res, next) {
   const token = extractToken(req);
   if (token) {
     const { verifyToken } = require('./auth');
-    let userId = verifyToken(token, SECRET_KEY);
+    let userId  = verifyToken(token, SECRET_KEY);
     let isGuest = false;
     if (!userId) {
-      userId = verifyToken(token, SECRET_KEY + ':guest');
+      userId = verifyToken(token, GUEST_SECRET_KEY);
       if (userId) isGuest = true;
     }
     if (userId) req.user = { id: userId, isGuest };
@@ -185,10 +195,23 @@ function getISTString() {
 function getISTDateString() {
   return getISTDate().toDateString(); // e.g. "Thu Apr 03 2026"
 }
+// ─── Trust proxy — Render/Vercel puts real client IP in X-Forwarded-For ──
+app.set('trust proxy', 1);
+
+// ─── Security headers ────────────────────────────────────────────────────
+app.use((req, res, next) => {
+  res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  next();
+});
+
 // ─── Simple in-memory rate limiter (no external package needed) ──
 const _rlStore = new Map();
 function makeRateLimit(maxRequests, windowMs) {
   return (req, res, next) => {
+    // Use X-Forwarded-For (trust proxy = 1 above ensures req.ip is the real IP)
     const key  = req.ip || 'unknown';
     const now  = Date.now();
     const hits = (_rlStore.get(key) || []).filter(t => t > now - windowMs);
@@ -197,17 +220,19 @@ function makeRateLimit(maxRequests, windowMs) {
     }
     hits.push(now);
     _rlStore.set(key, hits);
-    // Prevent unbounded memory growth
-    if (_rlStore.size > 10000) {
-      const oldest = [..._rlStore.keys()][0];
-      _rlStore.delete(oldest);
+    // Clean up old entries periodically to prevent memory growth
+    if (_rlStore.size > 5000) {
+      for (const [k, v] of _rlStore) {
+        if (v.every(t => t <= now - windowMs)) _rlStore.delete(k);
+      }
     }
     next();
   };
 }
-const loginLimit    = makeRateLimit(10,  15 * 60 * 1000); // 10 attempts / 15 min
-const registerLimit = makeRateLimit(5,   60 * 60 * 1000); // 5 registrations / hour
-const chatLimit     = makeRateLimit(30,  60 * 60 * 1000); // 30 AI chats / hour
+const loginLimit      = makeRateLimit(10,  15 * 60 * 1000); // 10 attempts / 15 min
+const registerLimit   = makeRateLimit(5,   60 * 60 * 1000); // 5 registrations / hour
+const chatLimit       = makeRateLimit(30,  60 * 60 * 1000); // 30 AI chats / hour
+const deviceReportLim = makeRateLimit(120, 60 * 60 * 1000); // 120 reports / hour per device IP
 
 // Health check
 app.get('/health', (req, res) => {
@@ -231,8 +256,11 @@ app.post('/auth/register', registerLimit, async (req, res) => {
       return res.status(400).json({ error: 'Passwords do not match' });
     }
 
-    if (password.length < 6) {
-      return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (password.length < 8) {
+      return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    }
+    if (!/[A-Z]/.test(password) || !/[0-9]/.test(password)) {
+      return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
     }
 
     // Check if user exists
@@ -255,8 +283,8 @@ app.post('/auth/register', registerLimit, async (req, res) => {
     // Notify admin + update spreadsheet (fire-and-forget — don't block response)
     trackNewRegistration(user, 'email', true).catch(() => {});
 
-    // Create token
-    const token = createToken(user.id, SECRET_KEY);
+    // Create token — embed token_version so password reset invalidates old sessions
+    const token = createToken(user.id, SECRET_KEY, 7 * 24 * 60 * 60 * 1000, user.token_version || 0);
 
     // Set cookie (SameSite=None; Secure needed for cross-origin Vercel→Render)
     res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
@@ -294,8 +322,8 @@ app.post('/auth/login', loginLimit, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
-    // Create token
-    const token = createToken(user.id, SECRET_KEY);
+    // Create token — embed token_version so password reset invalidates old sessions
+    const token = createToken(user.id, SECRET_KEY, 7 * 24 * 60 * 60 * 1000, user.token_version || 0);
 
     // Set cookie (SameSite=None; Secure for cross-origin)
     res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
@@ -373,8 +401,8 @@ app.post('/auth/guest', async (req, res) => {
       }
     }
 
-    // Issue short-lived guest token (1 hour), signed with a guest-specific secret
-    const token = createToken(guest.id, SECRET_KEY + ':guest', 60 * 60 * 1000);
+    // Issue short-lived guest token (1 hour), signed with a separate guest secret
+    const token = createToken(guest.id, GUEST_SECRET_KEY, 60 * 60 * 1000);
 
     res.json({
       token,
@@ -458,7 +486,8 @@ app.post('/auth/reset-password', async (req, res) => {
     const { token, newPassword, confirmPassword } = req.body;
     if (!token || !newPassword) return res.status(400).json({ error: 'Token and new password required' });
     if (newPassword !== confirmPassword)  return res.status(400).json({ error: 'Passwords do not match' });
-    if (newPassword.length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters' });
+    if (newPassword.length < 8) return res.status(400).json({ error: 'Password must be at least 8 characters' });
+    if (!/[A-Z]/.test(newPassword) || !/[0-9]/.test(newPassword)) return res.status(400).json({ error: 'Password must contain at least one uppercase letter and one number' });
 
     const entry = db.findValidResetToken(token);
     if (!entry) return res.status(400).json({ error: 'Reset link is invalid or has expired' });
@@ -470,8 +499,10 @@ app.post('/auth/reset-password', async (req, res) => {
     const users = db.getUsers();
     const idx   = users.findIndex(u => u.id === entry.user_id);
     if (idx === -1) return res.status(404).json({ error: 'User not found' });
-    users[idx].password_hash = password_hash;
-    users[idx].updated_at    = new Date().toISOString();
+    users[idx].password_hash  = password_hash;
+    users[idx].updated_at     = new Date().toISOString();
+    // Increment token version — invalidates all existing JWT sessions on next request
+    users[idx].token_version  = (users[idx].token_version || 0) + 1;
     db.saveUsers(users);
     db.consumeResetToken(token);
 
@@ -523,7 +554,7 @@ app.post('/auth/google', async (req, res) => {
       trackNewRegistration(user, 'google', true).catch(() => {});
     }
 
-    const token = createToken(user.id, SECRET_KEY);
+    const token = createToken(user.id, SECRET_KEY, 7 * 24 * 60 * 60 * 1000, user.token_version || 0);
     res.setHeader('Set-Cookie', `bhoomiq_token=${token}; Path=/; HttpOnly; Max-Age=${7 * 24 * 60 * 60}; SameSite=None; Secure`);
     res.json({ token, user: { id: user.id, username: user.username, email: user.email } });
   } catch (err) {
@@ -636,7 +667,7 @@ app.get('/api/plants/:id/readings', requireAuth, (req, res) => {
     return res.status(404).json({ error: 'Plant not found' });
   }
 
-  const limit = req.query.limit ? parseInt(req.query.limit) : 100;
+  const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
   const readings = db.getReadingsByPlantId(req.params.id, limit);
 
   res.json(readings);
@@ -840,7 +871,9 @@ app.post('/api/plants/:id/analyze', requireAuth, async (req, res) => {
 app.get('/api/dashboard', requireAuth, (req, res) => {
   try {
     const plants = db.findPlantsByUserId(req.user.id);
-    const readings = db.getReadings();
+    // Only fetch readings for this user's plants — never load global readings
+    const userPlantIds = new Set(plants.map(p => p.id));
+    const readings = db.getReadings().filter(r => userPlantIds.has(r.plant_id));
 
     let totalPlants = plants.length;
     let healthyCount = 0;
@@ -892,7 +925,9 @@ app.get('/api/dashboard', requireAuth, (req, res) => {
 app.get('/api/analytics', requireAuth, (req, res) => {
   try {
     const plants = db.findPlantsByUserId(req.user.id);
-    const allReadings = db.getReadings();
+    // Filter at query time — never expose other users' readings
+    const userPlantIds = new Set(plants.map(p => p.id));
+    const allReadings = db.getReadings().filter(r => userPlantIds.has(r.plant_id));
 
     const plantStats = plants.map(plant => {
       const plantReadings = allReadings
@@ -1085,7 +1120,7 @@ function store_device_readings_for_user(deviceIds, limit) {
 // POST /api/device-report?moisture=45&temperature=24.1
 // Headers: Content-Type: image/jpeg  x-device-key: <key>
 // Body: raw JPEG bytes (may be empty if no camera)
-app.post('/api/device-report', requireDevice, async (req, res) => {
+app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) => {
   const moisture_pct  = parseFloat(req.query.moisture    || req.query.moisture_pct || 0);
   const temperature_c = parseFloat(req.query.temperature || req.query.temperature_c || 0);
   const battery_pct   = req.query.battery !== undefined ? parseInt(req.query.battery) : null;
@@ -1928,9 +1963,10 @@ let _socialCache = { date: null, content: null };
 // Called by Make.com daily to get AI-generated post content
 // Protected by SOCIAL_API_KEY env var
 app.get('/api/social/daily-content', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const apiKey = req.headers['x-api-key']; // never accept key from query params (browser history leak)
   const expected = process.env.SOCIAL_API_KEY;
-  if (expected && apiKey !== expected) {
+  // Fail secure: if SOCIAL_API_KEY is not configured, block all access
+  if (!expected || apiKey !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
 
@@ -1952,9 +1988,10 @@ app.get('/api/social/daily-content', async (req, res) => {
 // POST /api/social/refresh
 // Force regenerate today's content (optional manual trigger)
 app.post('/api/social/refresh', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const apiKey = req.headers['x-api-key']; // never accept key from query params (browser history leak)
   const expected = process.env.SOCIAL_API_KEY;
-  if (expected && apiKey !== expected) {
+  // Fail secure: if SOCIAL_API_KEY is not configured, block all access
+  if (!expected || apiKey !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   try {
@@ -1970,9 +2007,10 @@ app.post('/api/social/refresh', async (req, res) => {
 // Manually trigger today's social media post (for testing or on-demand posting)
 // Protected by SOCIAL_API_KEY
 app.post('/api/social/post-now', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const apiKey = req.headers['x-api-key']; // never accept key from query params (browser history leak)
   const expected = process.env.SOCIAL_API_KEY;
-  if (expected && apiKey !== expected) {
+  // Fail secure: if SOCIAL_API_KEY is not configured, block all access
+  if (!expected || apiKey !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   const force = req.query.force === 'true';
@@ -1987,9 +2025,10 @@ app.post('/api/social/post-now', async (req, res) => {
 // GET /api/social/status
 // Check today's posting status
 app.get('/api/social/status', async (req, res) => {
-  const apiKey = req.headers['x-api-key'] || req.query.key;
+  const apiKey = req.headers['x-api-key']; // never accept key from query params (browser history leak)
   const expected = process.env.SOCIAL_API_KEY;
-  if (expected && apiKey !== expected) {
+  // Fail secure: if SOCIAL_API_KEY is not configured, block all access
+  if (!expected || apiKey !== expected) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   res.json({
