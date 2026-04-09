@@ -1292,10 +1292,12 @@ app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) 
     health_score:     aiResult.health_score,
     alert_level:      aiResult.alert_level,
     buzzer,
-    animal_detected:  aiResult.animal_detected  || false,
-    animal_type:      aiResult.animal_type       || 'none',
+    animal_detected:  aiResult.animal_detected    || false,
+    animal_type:      aiResult.animal_type         || 'none',
     animal_threat:    aiResult.animal_threat_level || 'none',
-    server_ist:       getISTString()   // server-side IST timestamp for this report
+    mode:             deviceMode,   // 'auto'|'semi' — master logs this for diagnostics
+    ai_pump_wanted:   aiResult.pump_needed,  // what AI wanted (useful in semi mode UI)
+    server_ist:       getISTString()
   });
 });
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { getFarmStatus, sendSlavePumpCommand, getDevices } from '../api';
+import { getFarmStatus, sendSlavePumpCommand, getDevices, setDeviceMode } from '../api';
 
 // ─── health helpers ───────────────────────────────────────────
 const moistureColor = (pct) => {
@@ -289,18 +289,35 @@ export default function FarmDashboard() {
   const [error,          setError]          = useState('');
   const [lastRefresh,    setLastRefresh]    = useState(null);
   const [devices,        setDevices]        = useState([]);
-  const [selectedKey,    setSelectedKey]    = useState(null); // device_key chosen by user
+  const [selectedKey,    setSelectedKey]    = useState(null);
+  const [deviceMode,     setFarmMode]       = useState('auto'); // 'auto' | 'semi'
+  const [modeLoading,    setModeLoading]    = useState(false);
 
   // Load user's own devices on mount, then auto-select the first one
   useEffect(() => {
     getDevices()
       .then(list => {
         setDevices(list || []);
-        if (list && list.length > 0) setSelectedKey(list[0].device_key);
-        else setLoading(false); // no devices — stop spinner
+        if (list && list.length > 0) {
+          setSelectedKey(list[0].device_key);
+          setFarmMode(list[0].mode || 'auto');
+        } else setLoading(false);
       })
       .catch(() => { setLoading(false); setError('Could not load your devices.'); });
   }, []);
+
+  async function handleModeToggle() {
+    const selDevice = devices.find(d => d.device_key === selectedKey);
+    if (!selDevice) return;
+    const newMode = deviceMode === 'auto' ? 'semi' : 'auto';
+    setModeLoading(true);
+    try {
+      await setDeviceMode(selDevice.id, newMode);
+      setFarmMode(newMode);
+      setDevices(prev => prev.map(d => d.id === selDevice.id ? { ...d, mode: newMode } : d));
+    } catch (_) {}
+    finally { setModeLoading(false); }
+  }
 
   const load = useCallback(async () => {
     if (!selectedKey) return;
@@ -369,6 +386,15 @@ export default function FarmDashboard() {
                 {badge.label}
               </div>
             )}
+            {/* Mode toggle */}
+            <button
+              onClick={handleModeToggle}
+              disabled={modeLoading}
+              className={`mode-toggle-btn ${deviceMode === 'auto' ? 'mode-auto' : 'mode-semi'}`}
+              title={deviceMode === 'auto' ? 'Auto: AI controls valves — click for Semi-Auto' : 'Semi-Auto: manual control only — click for Auto'}
+            >
+              {modeLoading ? '⏳' : deviceMode === 'auto' ? '🤖 Auto Mode' : '🔧 Semi-Auto'}
+            </button>
             <button onClick={load} style={{
               background: 'rgba(44,95,45,0.3)', border: '1px solid rgba(151,188,98,0.3)',
               color: '#97bc62', borderRadius: 20, padding: '8px 20px',
@@ -377,6 +403,14 @@ export default function FarmDashboard() {
               ↻ Refresh
             </button>
           </div>
+        </div>
+
+        {/* Mode banner */}
+        <div className={`mode-banner ${deviceMode === 'auto' ? 'mode-banner-auto' : 'mode-banner-semi'}`} style={{ marginBottom: 20 }}>
+          {deviceMode === 'auto'
+            ? '🤖 Auto Mode — AI moisture dekh ke slave valves khud control karta hai'
+            : '🔧 Semi-Auto Mode — Slave valves sirf aapke manual command par chalenge'
+          }
         </div>
 
         {/* Stats summary bar */}

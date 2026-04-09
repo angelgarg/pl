@@ -124,13 +124,15 @@ void setupWiFiNetworks() {
   wifiMulti.addAP("CILP_Open",  "cilp@tiet#b122");   // college garden WiFi
   wifiMulti.addAP("GuestHouse", "ghouse@tugh");       // guest house
   wifiMulti.addAP("HostelQ",    "hostelnet");          // hostel
-  wifiMulti.addAP("Tiuu",       "12345678");          // backup: home
+  wifiMulti.addAP("Tiuu",       "12345678");
+  wifiMulti.addAP("Manzil1102",       "Hemabh@23");
+  wifiMulti.addAP("Manzil1102_5G",  "Hemabh@23");          // backup: home
   // wifiMulti.addAP("MyHotspot", "password");        // ← add mobile hotspot as field fallback
 }
 
 #define BACKEND_URL  "https://pl-kp57.onrender.com"  // ← BhoomiIQ backend
-#define DEVICE_KEY   "piq-FA20E3-2D352D"             // ← from BhoomiIQ dashboard
-
+//#define DEVICE_KEY   "piq-FA20E3-2D352D"             // ← from BhoomiIQ dashboard garden
+#define DEVICE_KEY   "piq-839072-2248CA"
 #define SENSOR_INTERVAL_S        60      // read sensors + check emergency every 60s (day & night)
 #define CLOUD_REPORT_INTERVAL_H  3       // send AI report every 3 hours (daytime only)
 
@@ -704,9 +706,19 @@ for(int attempt=1; attempt<=3; attempt++){
   if(code == 200){
     String body = http.getString();
     res.ok             = true;
-    res.valve          = body.indexOf("\"pump\":true")           != -1; // backend still sends "pump" key
+    res.valve          = body.indexOf("\"pump\":true")           != -1;
     res.buzzer         = body.indexOf("\"buzzer\":true")         != -1;
     res.animal_detected= body.indexOf("\"animal_detected\":true")!= -1;
+
+    // Log device mode and AI intent (informational — actual valve is already decided by backend)
+    bool semiMode   = body.indexOf("\"mode\":\"semi\"")    != -1;
+    bool aiWanted   = body.indexOf("\"ai_pump_wanted\":true") != -1;
+    if (semiMode && aiWanted && !res.valve)
+      Serial.println("[MODE] Semi-Auto: AI wanted to water but valve suppressed — use dashboard button");
+    else if (semiMode)
+      Serial.println("[MODE] Semi-Auto: valve only opens on manual dashboard command");
+    else
+      Serial.println("[MODE] Auto: AI is in control");
 
     // Extract animal_type string from JSON
     int atIdx = body.indexOf("\"animal_type\":\"");
@@ -858,14 +870,4 @@ if(!night && cloudDue && WiFi.status() == WL_CONNECTED){
   if(r.ok && r.animal_detected){
     Serial.printf("[ANIMAL] %s detected (threat:%s)\n", r.animal_type, r.animal_threat);
     int cycles = (strcmp(r.animal_threat,"high")==0) ? 5 :
-                 (strcmp(r.animal_threat,"low") ==0) ? 2 : 3;
-    beepAnimal(cycles);
-  }
-
-  Serial.printf("[NEXT] Next AI report in %dh\n", CLOUD_REPORT_INTERVAL_H);
-}
-
-delay(500);
-esp_task_wdt_reset();
-
-}
+                 (strcmp(r.animal_threat,"low") ==0) ? 
