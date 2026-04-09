@@ -303,13 +303,23 @@ export const getDeviceLatestById = async (deviceId) => {
   return res.json();
 };
 
-export const triggerPump = async (duration_ms = 5000) => {
+export const triggerPump = async (duration_ms = 5000, device_key = null) => {
   const res = await apiFetch('/api/pump/manual', {
     method: 'POST',
-    body: JSON.stringify({ duration_ms })
+    body: JSON.stringify({ duration_ms, ...(device_key ? { device_key } : {}) })
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || 'Pump command failed');
+  return data;
+};
+
+export const setDeviceMode = async (deviceId, mode) => {
+  const res = await apiFetch(`/api/devices/${deviceId}/mode`, {
+    method: 'PATCH',
+    body: JSON.stringify({ mode })
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || 'Failed to set mode');
   return data;
 };
 

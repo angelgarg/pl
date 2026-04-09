@@ -2736,6 +2736,47 @@ input:focus, select:focus, textarea:focus {
 }
 .pump-btn-desi:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
+/* ── Mode toggle button ── */
+.mode-toggle-btn {
+  padding: 5px 14px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s;
+}
+.mode-toggle-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+.mode-auto {
+  background: linear-gradient(135deg, #1d4ed8, #2563eb);
+  color: #fff;
+}
+.mode-auto:hover:not(:disabled) { background: linear-gradient(135deg, #1e40af, #1d4ed8); }
+.mode-semi {
+  background: linear-gradient(135deg, #b45309, #d97706);
+  color: #fff;
+}
+.mode-semi:hover:not(:disabled) { background: linear-gradient(135deg, #92400e, #b45309); }
+
+/* ── Mode banner ── */
+.mode-banner {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 7px 14px;
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+.mode-banner-auto {
+  background: rgba(37,99,235,0.15);
+  color: #93c5fd;
+  border: 1px solid rgba(37,99,235,0.3);
+}
+.mode-banner-semi {
+  background: rgba(217,119,6,0.15);
+  color: #fcd34d;
+  border: 1px solid rgba(217,119,6,0.3);
+}
+
 /* Desi stat cards in summary */
 .live-stat-desi {
   border-radius: 12px;

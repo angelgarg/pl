@@ -4,6 +4,7 @@ import {
   Tooltip, ResponsiveContainer
 } from 'recharts';
 import * as api from '../api';
+import { setDeviceMode } from '../api';
 
 // ─── IST helpers ─────────────────────────────────────────────
 
@@ -148,8 +149,10 @@ export default function LivePage({ isGuest, onAddToast }) {
   const [pumpLoading, setPumpLoading] = useState(false);
   const [pumpDuration, setPumpDuration] = useState(5);
   const [imgError, setImgError]     = useState(false);
-  const [devices, setDevices]       = useState([]);
+  const [devices, setDevices]           = useState([]);
   const [selectedDeviceId, setSelectedDeviceId] = useState('all');
+  const [deviceMode, setDeviceMode]     = useState('auto');  // 'auto' | 'semi'
+  const [modeLoading, setModeLoading]   = useState(false);
   const [istClock, setIstClock]     = useState(getISTString());
   const esRef = useRef(null);
 
@@ -162,7 +165,11 @@ export default function LivePage({ isGuest, onAddToast }) {
   }, []);
 
   useEffect(() => {
-    api.getDevices().then(setDevices).catch(() => {});
+    api.getDevices().then(list => {
+      setDevices(list || []);
+      // Seed mode from first device
+      if (list && list.length > 0) setDeviceMode(list[0].mode || 'auto');
+    }).catch(() => {});
     api.getDeviceHistory(100).then(h => {
       const rows = h || [];
       setHistory(rows);
@@ -226,12 +233,33 @@ export default function LivePage({ isGuest, onAddToast }) {
     if (isGuest) return onAddToast?.({ type: 'warning', message: 'Guests paani nahi de sakte 🚫' });
     setPumpLoading(true);
     try {
-      await api.triggerPump(pumpDuration * 1000);
-      onAddToast?.({ type: 'success', message: `💦 Paani command bhej diya — ${pumpDuration} second ke liye!` });
+      // Pass the selected device's key so command goes to the right device
+      const selDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
+      await api.triggerPump(pumpDuration * 1000, selDevice?.device_key || null);
+      onAddToast?.({ type: 'success', message: `💦 Paani command bhej diya — ${pumpDuration} second ke liye! Agli report par valve khulega.` });
     } catch (err) {
       onAddToast?.({ type: 'error', message: err.message || 'Command fail ho gaya' });
     } finally {
       setPumpLoading(false);
+    }
+  }
+
+  async function handleModeToggle() {
+    if (isGuest) return;
+    const selDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
+    if (!selDevice) return;
+    const newMode = deviceMode === 'auto' ? 'semi' : 'auto';
+    setModeLoading(true);
+    try {
+      await setDeviceMode(selDevice.id, newMode);
+      setDeviceMode(newMode);
+      // Update local devices list too
+      setDevices(prev => prev.map(d => d.id === selDevice.id ? { ...d, mode: newMode } : d));
+      onAddToast?.({ type: 'success', message: newMode === 'auto' ? '🤖 Auto mode on — AI valve control karega' : '🔧 Semi-auto mode on — aap khud control karo' });
+    } catch (err) {
+      onAddToast?.({ type: 'error', message: err.message || 'Mode change fail' });
+    } finally {
+      setModeLoading(false);
     }
   }
 
@@ -281,7 +309,12 @@ export default function LivePage({ isGuest, onAddToast }) {
           <select
             className="device-sel-dropdown"
             value={selectedDeviceId}
-            onChange={e => { setSelectedDeviceId(e.target.value); setLive(null); setImgError(false); }}
+            onChange={e => {
+              setSelectedDeviceId(e.target.value);
+              setLive(null); setImgError(false);
+              const d = devices.find(d => d.id === e.target.value);
+              if (d) setDeviceMode(d.mode || 'auto');
+            }}
           >
             <option value="all">Sabhi Devices</option>
             {devices.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
@@ -589,8 +622,26 @@ export default function LivePage({ isGuest, onAddToast }) {
 
           {/* ── Pump / Valve control ── */}
           <div className="live-card live-card-desi pump-card">
-            <div className="live-card-header live-card-header-saffron">
+            <div className="live-card-header live-card-header-saffron" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span>💦 Paani Valve Control</span>
+              {/* Mode toggle — only for logged-in users */}
+              {!isGuest && (
+                <button
+                  className={`mode-toggle-btn ${deviceMode === 'auto' ? 'mode-auto' : 'mode-semi'}`}
+                  onClick={handleModeToggle}
+                  disabled={modeLoading}
+                  title={deviceMode === 'auto' ? 'Auto: AI controls valve — click to switch to Semi-Auto' : 'Semi-Auto: You control valve — click to switch to Auto'}
+                >
+                  {modeLoading ? '⏳' : deviceMode === 'auto' ? '🤖 Auto' : '🔧 Semi-Auto'}
+                </button>
+              )}
+            </div>
+            {/* Mode explanation banner */}
+            <div className={`mode-banner ${deviceMode === 'auto' ? 'mode-banner-auto' : 'mode-banner-semi'}`}>
+              {deviceMode === 'auto'
+                ? '🤖 Auto Mode — AI mitti dekhkar khud paani deta hai'
+                : '🔧 Semi-Auto Mode — AI sirf salah deta hai, paani aap doge'
+              }
             </div>
             <div className="pump-control-row">
               <div className="pump-status-block">

@@ -1067,8 +1067,9 @@ function requireDevice(req, res, next) {
   return res.status(401).json({ error: 'Invalid device key' });
 }
 
-// Pending manual pump command (set by dashboard, consumed by ESP32)
-let pendingPumpCmd = null;
+// Pending manual pump commands — keyed by device_key so each device has its own queue
+// Manual commands bypass the moisture safety gate (user explicitly asked for it)
+const pendingPumpCmds = {}; // { [device_key]: { duration, triggeredBy, at } }
 
 // SSE clients — keyed by userId so each user only receives their own device events
 const sseClients = new Map(); // Map<userId, Set<res>>
@@ -1225,15 +1226,28 @@ app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) 
     }
   }
 
-  // Merge manual pump command if queued
-  const manualCmd = pendingPumpCmd;
-  pendingPumpCmd = null;
-  // Safety gate: never pump if soil moisture is already sufficient (>= 60%)
-  // This prevents the AI from triggering the pump when soil is already wet
-  const pump_activated = (moisture_pct < 60) && (aiResult.pump_needed || !!manualCmd);
-  const pump_duration_ms = manualCmd
-    ? manualCmd.duration
-    : (aiResult.pump_duration_seconds || 7) * 1000;
+  // Consume manual pump command for THIS specific device (keyed by device_key)
+  const thisDeviceKey = req.deviceRecord?.device_key || null;
+  const manualCmd = thisDeviceKey ? (pendingPumpCmds[thisDeviceKey] || null) : null;
+  if (thisDeviceKey && pendingPumpCmds[thisDeviceKey]) delete pendingPumpCmds[thisDeviceKey];
+
+  // Device operating mode: 'auto' = AI can trigger relay; 'semi' = only manual triggers relay
+  const deviceMode = req.deviceRecord?.mode || 'auto';
+
+  let pump_activated, pump_duration_ms;
+  if (manualCmd) {
+    // Manual always fires — user explicitly pressed the button, bypass moisture gate and mode
+    pump_activated   = true;
+    pump_duration_ms = manualCmd.duration;
+  } else if (deviceMode === 'semi') {
+    // Semi-auto: AI never fires relay — only manual commands do
+    pump_activated   = false;
+    pump_duration_ms = 0;
+  } else {
+    // Auto mode: AI decides, safety gate prevents watering already-wet soil
+    pump_activated   = (moisture_pct < 60) && aiResult.pump_needed;
+    pump_duration_ms = pump_activated ? (aiResult.pump_duration_seconds || 7) * 1000 : 0;
+  }
 
   // Update device last_seen_at in IST
   if (req.deviceRecord) {
@@ -1378,10 +1392,22 @@ app.get('/api/device/history', requireAuth, (req, res) => {
 // ── Manual pump trigger from dashboard ───────────────────────
 app.post('/api/pump/manual', requireAuth, (req, res) => {
   if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot control the pump' });
-  const duration_ms = Math.min(parseInt(req.body.duration_ms || 5000), 30000);
-  pendingPumpCmd = { duration: duration_ms, triggeredBy: req.user.id, at: Date.now() };
-  console.log(`[PUMP] Manual command queued — ${duration_ms}ms`);
-  res.json({ success: true, message: `Pump will activate for ${duration_ms / 1000}s on next device report` });
+  const duration_ms = Math.min(Math.max(parseInt(req.body.duration_ms || 5000), 1000), 30000);
+  // device_key can be sent in body, or fall back to first device of user
+  let deviceKey = req.body.device_key || null;
+  if (deviceKey) {
+    // Verify ownership
+    const dev = db.findDeviceByKey(deviceKey);
+    if (!dev || dev.user_id !== req.user.id) return res.status(403).json({ error: 'Not your device' });
+  } else {
+    // Fallback: first registered device of this user
+    const devs = db.findDevicesByUserId(req.user.id);
+    if (!devs.length) return res.status(404).json({ error: 'No device registered' });
+    deviceKey = devs[0].device_key;
+  }
+  pendingPumpCmds[deviceKey] = { duration: duration_ms, triggeredBy: req.user.id, at: Date.now() };
+  console.log(`[PUMP] Manual command queued for ${deviceKey} — ${duration_ms}ms`);
+  res.json({ success: true, message: `Pump will activate for ${duration_ms / 1000}s on next device report`, device_key: deviceKey });
 });
 
 // ── Device stats summary ─────────────────────────────────────
@@ -1549,6 +1575,18 @@ app.delete('/api/devices/:id', requireAuth, (req, res) => {
   if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot delete devices' });
   db.deleteDevice(req.params.id);
   res.json({ success: true });
+});
+
+// PATCH /api/devices/:id/mode — switch between 'auto' and 'semi' mode
+app.patch('/api/devices/:id/mode', requireAuth, (req, res) => {
+  if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot change device mode' });
+  const device = db.findDeviceById(req.params.id);
+  if (!device || device.user_id !== req.user.id) return res.status(404).json({ error: 'Device not found' });
+  const { mode } = req.body;
+  if (!['auto', 'semi'].includes(mode)) return res.status(400).json({ error: 'mode must be "auto" or "semi"' });
+  const updated = db.updateDevice(req.params.id, { mode });
+  console.log(`[DEVICE] Mode changed: ${device.device_key} → ${mode}`);
+  res.json({ id: updated.id, name: updated.name, mode: updated.mode });
 });
 
 // Get latest reading for a specific device

@@ -453,6 +453,7 @@ function createDevice(data) {
     device_key,
     location_lat: data.location_lat || null,
     location_lng: data.location_lng || null,
+    mode:         'auto',           // 'auto' | 'semi' — controls whether AI can trigger relay
     is_active:    true,
     last_seen_at: null,
     created_at:   new Date().toISOString(),
