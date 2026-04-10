@@ -22,50 +22,24 @@ const SECRET_KEY       = process.env.SECRET_KEY       || 'super-secret-dev-key-c
 // Guest secret is separate — never derivable from SECRET_KEY
 const GUEST_SECRET_KEY = process.env.GUEST_SECRET_KEY || 'bhoomiq-guest-secret-2024-xK9mP3nQ';
 
-// Middleware — allow localhost + this project's Vercel deployments + optional FRONTEND_URL env var
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'http://127.0.0.1:5173',
-  'http://127.0.0.1:3000',
-  'https://pl-kp57.onrender.com',
-  // Known Vercel production + branch-preview URLs for this project
-  'https://pl-kp57-git-main-gargangel2233s-projects.vercel.app',
-  'https://pl-kp57-gargangel2233s-projects.vercel.app',
-  ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
-];
-
-// Allow any Vercel preview URL scoped to THIS user's project (not any random *.vercel.app)
-function isAllowedOrigin(origin) {
-  if (!origin) return true;
-  if (allowedOrigins.includes(origin)) return true;
-  // Scoped Vercel preview URLs: pl-kp57-*-gargangel2233s-projects.vercel.app
-  if (/^https:\/\/pl-kp57(-[a-z0-9-]+)?-gargangel2233s-projects\.vercel\.app$/.test(origin)) return true;
-  return false;
-}
-
+// CORS — open to all origins so Vercel, localhost, and any preview URL all work
 app.use(cors({
-  origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
-  },
+  origin: true,   // reflect the request origin (allows any origin with credentials)
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret'],
+  optionsSuccessStatus: 200
+}));
+app.options('*', cors({
+  origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret'],
   optionsSuccessStatus: 200
 }));
 
-// Explicit OPTIONS preflight handler (belt + suspenders)
-app.options('*', cors({
-  origin: (origin, callback) => {
-    if (isAllowedOrigin(origin)) return callback(null, true);
-    callback(new Error('Not allowed by CORS'));
-  },
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret'],
-  optionsSuccessStatus: 200
-}));
+// Helper kept for SSE endpoint
+function isAllowedOrigin() { return true; }
 
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
