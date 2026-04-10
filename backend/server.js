@@ -1391,9 +1391,24 @@ app.get('/api/device/history', requireAuth, (req, res) => {
 });
 
 // ── Manual pump trigger from dashboard ───────────────────────
+// GET /api/device/pending-command — ESP32 polls this every 30 s for instant manual commands
+// Auth: x-device-key header (no JWT needed — device key is the secret)
+app.get('/api/device/pending-command', (req, res) => {
+  const deviceKey = req.headers['x-device-key'] || req.query.device_key;
+  if (!deviceKey) return res.json({ pump: false });
+  const cmd = pendingPumpCmds[deviceKey] || null;
+  if (cmd) {
+    delete pendingPumpCmds[deviceKey];
+    console.log(`[CMD] Instant command delivered to ${deviceKey} — ${cmd.duration}ms`);
+    return res.json({ pump: true, duration_ms: cmd.duration });
+  }
+  return res.json({ pump: false });
+});
+
 app.post('/api/pump/manual', requireAuth, (req, res) => {
   if (req.user.isGuest) return res.status(403).json({ error: 'Guests cannot control the pump' });
-  const duration_ms = Math.min(Math.max(parseInt(req.body.duration_ms || 5000), 1000), 30000);
+  // Allow up to 5 minutes for manual dose — user controls the slider
+  const duration_ms = Math.min(Math.max(parseInt(req.body.duration_ms || 10000), 1000), 300000);
   // device_key can be sent in body, or fall back to first device of user
   let deviceKey = req.body.device_key || null;
   if (deviceKey) {

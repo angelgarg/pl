@@ -189,9 +189,11 @@ unsigned long lastEmergencyValveMs = 0; // cooldown tracker for local emergency 
 // Loop timing — millis() based, replaces blocking delay
 unsigned long lastSensorMs     = 0;  // last sensor read
 unsigned long lastCloudMs      = 0;  // last cloud AI report
+unsigned long lastCmdPollMs    = 0;  // last manual-command poll
 bool          firstCloudDone   = false; // send first report on boot (before 3h timer)
-#define SENSOR_INTERVAL_MS     (SENSOR_INTERVAL_S * 1000UL)
+#define SENSOR_INTERVAL_MS       (SENSOR_INTERVAL_S * 1000UL)
 #define CLOUD_REPORT_INTERVAL_MS (CLOUD_REPORT_INTERVAL_H * 3600UL * 1000UL)
+#define CMD_POLL_INTERVAL_MS     30000UL  // poll for instant manual commands every 30 s
 
 #define OFFLINE_QUEUE_SIZE 5
 OfflineReading offlineQueue[OFFLINE_QUEUE_SIZE];
@@ -763,6 +765,37 @@ Serial.println("[HTTP] All attempts failed");
 return res;
 }
 
+// ───────────────── INSTANT PUMP POLL ─────────────────
+// Called every 30 s — checks backend for a queued manual "Paani Do" command.
+// Fires the valve immediately without waiting for the 3-hour AI report.
+void checkPendingCommand() {
+  if (WiFi.status() != WL_CONNECTED) return;
+  HTTPClient http;
+  String url = String(BACKEND_URL) + "/api/device/pending-command";
+  http.begin(url);
+  http.addHeader("x-device-key", DEVICE_KEY);
+  http.setTimeout(8000);
+  esp_task_wdt_reset();
+  int code = http.GET();
+  if (code == 200) {
+    String body = http.getString();
+    if (body.indexOf("\"pump\":true") != -1) {
+      unsigned long dur = 180000UL; // fallback 3 min
+      int dIdx = body.indexOf("\"duration_ms\":");
+      if (dIdx != -1) {
+        String numStr = body.substring(dIdx + 14);
+        long parsed = numStr.toInt();
+        if (parsed > 0) dur = (unsigned long)parsed;
+      }
+      Serial.printf("[CMD] 💧 Instant manual pump — valve ON for %lus\n", dur / 1000UL);
+      beepValve();
+      valveRun(dur); // manual always bypasses night-mode suppression
+    }
+  }
+  http.end();
+  esp_task_wdt_reset();
+}
+
 // ───────────────── SETUP ─────────────────
 void setup(){
 
@@ -809,6 +842,12 @@ esp_task_wdt_reset();
 
 unsigned long now = millis();
 bool night = isNightTime();
+
+// ── INSTANT COMMAND POLL (every 30s — catches manual "Paani Do" button presses) ─────
+if(now - lastCmdPollMs >= CMD_POLL_INTERVAL_MS){
+  lastCmdPollMs = now;
+  checkPendingCommand();
+}
 
 // ── SENSOR CHECK (every 60s — runs day AND night) ─────────────────────────
 if(now - lastSensorMs >= SENSOR_INTERVAL_MS){

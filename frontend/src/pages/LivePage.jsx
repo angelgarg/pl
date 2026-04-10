@@ -236,7 +236,8 @@ export default function LivePage({ isGuest, onAddToast }) {
       // Pass the selected device's key so command goes to the right device
       const selDevice = devices.find(d => d.id === selectedDeviceId) || devices[0];
       await api.triggerPump(pumpDuration * 1000, selDevice?.device_key || null);
-      onAddToast?.({ type: 'success', message: `💦 Paani command bhej diya — ${pumpDuration} second ke liye! Agli report par valve khulega.` });
+      const durLabel = pumpDuration >= 60 ? `${Math.round(pumpDuration / 60)} min` : `${pumpDuration} sec`;
+      onAddToast?.({ type: 'success', message: `💦 Paani command bhej diya — ${durLabel} ke liye! ~30 second mein valve khulega.` });
     } catch (err) {
       onAddToast?.({ type: 'error', message: err.message || 'Command fail ho gaya' });
     } finally {
@@ -660,16 +661,18 @@ export default function LivePage({ isGuest, onAddToast }) {
                 <div className="pump-manual-block">
                   <div className="pump-duration-row">
                     <label>Kitna Paani:</label>
-                    <input type="range" min="3" max="30" step="1"
+                    <input type="range" min="5" max="180" step="5"
                       value={pumpDuration}
                       onChange={e => setPumpDuration(+e.target.value)}
                     />
-                    <span className="pump-duration-val">{pumpDuration}s</span>
+                    <span className="pump-duration-val">
+                      {pumpDuration >= 60 ? `${Math.round(pumpDuration / 60)}min` : `${pumpDuration}s`}
+                    </span>
                   </div>
                   <button className="pump-btn-desi" onClick={handleManualPump} disabled={pumpLoading}>
                     {pumpLoading ? '⏳ Bhej Raha Hai…' : '💧 Paani Do'}
                   </button>
-                  <p className="pump-note">Agle device report par valve khulega</p>
+                  <p className="pump-note">⚡ ~30 second mein valve khulega</p>
                 </div>
               )}
             </div>
