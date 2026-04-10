@@ -870,4 +870,14 @@ if(!night && cloudDue && WiFi.status() == WL_CONNECTED){
   if(r.ok && r.animal_detected){
     Serial.printf("[ANIMAL] %s detected (threat:%s)\n", r.animal_type, r.animal_threat);
     int cycles = (strcmp(r.animal_threat,"high")==0) ? 5 :
-                 (strcmp(r.animal_threat,"low") ==0) ? 
+                 (strcmp(r.animal_threat,"low") ==0) ? 2 : 3;
+    beepAnimal(cycles);
+  }
+
+  Serial.printf("[NEXT] Next AI report in %dh\n", CLOUD_REPORT_INTERVAL_H);
+}
+
+delay(500);
+esp_task_wdt_reset();
+
+}
