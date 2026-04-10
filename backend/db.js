@@ -453,9 +453,10 @@ function createDevice(data) {
     device_key,
     location_lat: data.location_lat || null,
     location_lng: data.location_lng || null,
-    mode:         'auto',           // 'auto' | 'semi' — controls whether AI can trigger relay
-    is_active:    true,
-    last_seen_at: null,
+    mode:                'auto',  // 'auto' | 'semi' — controls whether AI can trigger relay
+    is_active:           true,
+    last_seen_at:        null,
+    last_daily_water_at: null,   // IST date string when compulsory daily watering last fired
     created_at:   new Date().toISOString(),
     updated_at:   new Date().toISOString()
   };

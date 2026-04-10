@@ -138,7 +138,7 @@ void setupWiFiNetworks() {
 
 #define MOISTURE_CRITICAL 25             // % — emergency valve fires immediately (outdoor garden soil)
 #define MOISTURE_DRY      40             // % — "dry" warning level for AI report
-#define VALVE_EMERGENCY_MS       12000   // ms — 12s valve open per emergency (garden plot size)
+#define VALVE_EMERGENCY_MS       180000  // ms — 3 min valve open per emergency (matches cloud dose)
 #define VALVE_EMERGENCY_COOLDOWN_MS 300000 // 5 min cooldown — prevents over-watering outdoor garden
 
 // ── Night / Day schedule (IST) ──
@@ -711,12 +711,15 @@ for(int attempt=1; attempt<=3; attempt++){
     res.animal_detected= body.indexOf("\"animal_detected\":true")!= -1;
 
     // Log device mode and AI intent (informational — actual valve is already decided by backend)
-    bool semiMode   = body.indexOf("\"mode\":\"semi\"")    != -1;
-    bool aiWanted   = body.indexOf("\"ai_pump_wanted\":true") != -1;
+    bool semiMode    = body.indexOf("\"mode\":\"semi\"")         != -1;
+    bool aiWanted    = body.indexOf("\"ai_pump_wanted\":true")  != -1;
+    bool dailyForced = body.indexOf("\"daily_forced\":true")    != -1;
     if (semiMode && aiWanted && !res.valve)
       Serial.println("[MODE] Semi-Auto: AI wanted to water but valve suppressed — use dashboard button");
     else if (semiMode)
       Serial.println("[MODE] Semi-Auto: valve only opens on manual dashboard command");
+    else if (dailyForced && res.valve)
+      Serial.printf("[PUMP] Compulsory daily watering — valve ON for %lums\n", res.duration_ms);
     else
       Serial.println("[MODE] Auto: AI is in control");
 

@@ -22,24 +22,31 @@ const SECRET_KEY       = process.env.SECRET_KEY       || 'super-secret-dev-key-c
 // Guest secret is separate — never derivable from SECRET_KEY
 const GUEST_SECRET_KEY = process.env.GUEST_SECRET_KEY || 'bhoomiq-guest-secret-2024-xK9mP3nQ';
 
-// Middleware — allow localhost + any *.vercel.app + optional FRONTEND_URL env var
+// Middleware — allow localhost + this project's Vercel deployments + optional FRONTEND_URL env var
 const allowedOrigins = [
   'http://localhost:5173',
   'http://localhost:3000',
   'http://127.0.0.1:5173',
   'http://127.0.0.1:3000',
   'https://pl-kp57.onrender.com',
+  // Known Vercel production + branch-preview URLs for this project
+  'https://pl-kp57-git-main-gargangel2233s-projects.vercel.app',
+  'https://pl-kp57-gargangel2233s-projects.vercel.app',
   ...(process.env.FRONTEND_URL ? [process.env.FRONTEND_URL] : []),
 ];
 
+// Allow any Vercel preview URL scoped to THIS user's project (not any random *.vercel.app)
+function isAllowedOrigin(origin) {
+  if (!origin) return true;
+  if (allowedOrigins.includes(origin)) return true;
+  // Scoped Vercel preview URLs: pl-kp57-*-gargangel2233s-projects.vercel.app
+  if (/^https:\/\/pl-kp57(-[a-z0-9-]+)?-gargangel2233s-projects\.vercel\.app$/.test(origin)) return true;
+  return false;
+}
+
 app.use(cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    // Only allow exact origins — no wildcard regex that would allow any *.vercel.app
-    const ALLOWED_VERCEL = process.env.FRONTEND_URL || null;
-    if (allowedOrigins.includes(origin) || (ALLOWED_VERCEL && origin === ALLOWED_VERCEL)) {
-      return callback(null, true);
-    }
+    if (isAllowedOrigin(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -51,11 +58,7 @@ app.use(cors({
 // Explicit OPTIONS preflight handler (belt + suspenders)
 app.options('*', cors({
   origin: (origin, callback) => {
-    if (!origin) return callback(null, true);
-    const ALLOWED_VERCEL = process.env.FRONTEND_URL || null;
-    if (allowedOrigins.includes(origin) || (ALLOWED_VERCEL && origin === ALLOWED_VERCEL)) {
-      return callback(null, true);
-    }
+    if (isAllowedOrigin(origin)) return callback(null, true);
     callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
@@ -1234,6 +1237,14 @@ app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) 
   // Device operating mode: 'auto' = AI can trigger relay; 'semi' = only manual triggers relay
   const deviceMode = req.deviceRecord?.mode || 'auto';
 
+  // ── Daily compulsory watering state ───────────────────────────────────────
+  const istDay       = getISTDateString(); // e.g. "Thu Apr 10 2026"
+  const lastDailyDay = req.deviceRecord?.last_daily_water_at || null;
+  const dailyDone    = (lastDailyDay === istDay);
+  let   dailyForced  = false; // will be set true if we fire for compulsory daily reason
+
+  const PUMP_DURATION_AUTO_MS = 180000; // 3 minutes — standard watering dose
+
   let pump_activated, pump_duration_ms;
   if (manualCmd) {
     // Manual always fires — user explicitly pressed the button, bypass moisture gate and mode
@@ -1245,8 +1256,21 @@ app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) 
     pump_duration_ms = 0;
   } else {
     // Auto mode: AI decides, safety gate prevents watering already-wet soil
-    pump_activated   = (moisture_pct < 60) && aiResult.pump_needed;
-    pump_duration_ms = pump_activated ? (aiResult.pump_duration_seconds || 7) * 1000 : 0;
+    pump_activated = (moisture_pct < 60) && aiResult.pump_needed;
+
+    // Daily compulsory watering: if it hasn't watered at all today, force it on
+    if (!pump_activated && !dailyDone) {
+      pump_activated = true;
+      dailyForced    = true;
+      console.log(`[PUMP] Daily compulsory watering triggered for device ${thisDeviceKey}`);
+    }
+
+    pump_duration_ms = pump_activated ? PUMP_DURATION_AUTO_MS : 0; // 3 min fixed dose
+
+    // Record that today's compulsory watering has been satisfied
+    if (pump_activated && !dailyDone && req.deviceRecord) {
+      db.updateDevice(req.deviceRecord.id, { last_daily_water_at: istDay });
+    }
   }
 
   // Update device last_seen_at in IST
@@ -1297,6 +1321,7 @@ app.post('/api/device-report', requireDevice, deviceReportLim, async (req, res) 
     animal_threat:    aiResult.animal_threat_level || 'none',
     mode:             deviceMode,   // 'auto'|'semi' — master logs this for diagnostics
     ai_pump_wanted:   aiResult.pump_needed,  // what AI wanted (useful in semi mode UI)
+    daily_forced:     dailyForced,  // true if compulsory once-daily watering triggered
     server_ist:       getISTString()
   });
 });
@@ -1350,7 +1375,7 @@ app.post('/api/farm/pump-command', requireAuth, (req, res) => {
 app.get('/api/live-stream', requireAuth, (req, res) => {
   // CORS for SSE (must allow cross-origin from Vercel)
   const origin = req.headers.origin || '';
-  if (!origin || allowedOrigins.includes(origin) || /\.vercel\.app$/.test(origin)) {
+  if (isAllowedOrigin(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin || '*');
     res.setHeader('Access-Control-Allow-Credentials', 'true');
   }
