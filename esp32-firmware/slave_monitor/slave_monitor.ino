@@ -1,11 +1,11 @@
 /*
  * ╔══════════════════════════════════════════════════════════════╗
- * ║   BhoomiIQ — Slave Node Firmware v1.0                       ║
+ * ║   BhoomiIQ — Slave Node Firmware v1.1                       ║
  * ║   भूमि IQ — Slave Zone Monitor (ESP-NOW)                    ║
  * ╠══════════════════════════════════════════════════════════════╣
  * ║  Hardware: Generic ESP32 WROOM-32 (no camera needed)        ║
  * ║  Communicates with BhoomiIQ Master via ESP-NOW              ║
- * ║  No WiFi router required — direct ESP32-to-ESP32            ║
+ * ║  AUTO channel detection — no hardcoded channel needed!      ║
  * ╠══════════════════════════════════════════════════════════════╣
  * ║  WIRING:                                                     ║
  * ║   Soil moisture sensor  → GPIO 34 (analog in)               ║
@@ -13,12 +13,11 @@
  * ║   Relay (solenoid valve)→ GPIO 26 (active LOW)              ║
  * ║   Buzzer (optional)     → GPIO 27                           ║
  * ╠══════════════════════════════════════════════════════════════╣
- * ║  SETUP:                                                      ║
+ * ║  SETUP (only 2 things to configure):                        ║
  * ║   1. Set SLAVE_ID to a unique name e.g. "ZONE_01"           ║
- * ║   2. Set ZONE_NAME to describe this zone e.g. "Tomatoes"    ║
- * ║   3. Set MASTER_MAC to your BhoomiIQ master's MAC address   ║
- * ║      (Print master MAC from Serial Monitor on master boot)  ║
- * ║   4. Set WIFI_CHANNEL to match your master's WiFi channel   ║
+ * ║   2. Set MASTER_MAC to your master's MAC address            ║
+ * ║      (boot master once → Serial Monitor prints MAC)         ║
+ * ║   Channel is detected AUTOMATICALLY — no manual entry!      ║
  * ╚══════════════════════════════════════════════════════════════╝
  */
 
@@ -30,28 +29,30 @@
 #include "esp_task_wdt.h"
 
 // ─────────────────────────────────────────────────────────────
-//  USER CONFIG — EDIT BEFORE FLASHING EACH SLAVE
+//  USER CONFIG — only 2 things to edit before flashing
 // ─────────────────────────────────────────────────────────────
-//  ┌─ FIELD SETUP CHECKLIST ──────────────────────────────────┐
+//  ┌─ SETUP CHECKLIST ────────────────────────────────────────┐
 //  │  □ 1. Set SLAVE_ID — unique per node (ZONE_01, ZONE_02…) │
 //  │  □ 2. Set ZONE_NAME — label shown on dashboard           │
 //  │  □ 3. Set ZONE_AREA_ACRES — plot size                    │
-//  │  □ 4. Boot master FIRST → copy MAC from Serial Monitor   │
+//  │  □ 4. Boot master → Serial Monitor prints MAC            │
 //  │        → paste into MASTER_MAC below                     │
-//  │  □ 5. Copy WIFI_CHANNEL from master Serial Monitor       │
-//  │        "[ESPNOW] WiFi Channel: X" → set WIFI_CHANNEL=X  │
-//  │  □ 6. Calibrate soil sensor (see SENSOR CALIBRATION)     │
+//  │  ✅ NO channel needed — auto-detected at boot!           │
 //  └──────────────────────────────────────────────────────────┘
-#define SLAVE_ID        "COLGARDEN_01"  // ← unique per slave: COLGARDEN_01, COLGARDEN_02...
-#define ZONE_NAME       "College Garden A"  // ← human label shown in dashboard
-#define ZONE_AREA_ACRES 0.05f           // ← plot size in acres (0.05 ≈ 200 sq.m — typical college garden bed)
-#define WIFI_CHANNEL    1               // ← MUST match master's WiFi channel
-                                        //   Boot master → Serial Monitor prints:
-                                        //   "[ESPNOW] WiFi Channel: X" → put X here
+#define SLAVE_ID        "COLGARDEN_01"      // ← unique per slave
+#define ZONE_NAME       "College Garden A"  // ← label shown on dashboard
+#define ZONE_AREA_ACRES 0.05f               // ← plot size in acres
 
-// Master's MAC address — printed on master Serial Monitor at boot
+// Master MAC — boot master once, copy from Serial Monitor
 // Format: {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF}
-uint8_t MASTER_MAC[] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF}; // ← REPLACE WITH REAL MASTER MAC
+uint8_t MASTER_MAC[] = {0x1C, 0xDB, 0xD4, 0x45, 0x84, 0xF8}; // ← REPLACE WITH REAL MASTER MAC
+
+// ── Known WiFi SSIDs (same list as master) — slave scans these to find channel ──
+// Add/remove SSIDs to match your location
+const char* KNOWN_SSIDS[] = {
+  "CILP_Open", "GuestHouse", "HostelQ", "Tiuu", "Manzil1102", "Manzil1102_5G"
+};
+const int NUM_KNOWN_SSIDS = 6;
 
 // ─────────────────────────────────────────────────────────────
 //  PINS
@@ -217,19 +218,59 @@ void onDataRecv(const uint8_t *mac, const uint8_t *data, int len) {
 }
 
 // ─────────────────────────────────────────────────────────────
+//  AUTO CHANNEL DETECTION
+//  Scans WiFi, finds a known SSID, reads its channel.
+//  Master connects to the same SSID → same channel → ESP-NOW works.
+// ─────────────────────────────────────────────────────────────
+int8_t scanForChannel() {
+  Serial.println("[SCAN] Scanning for WiFi channel (auto-detect)...");
+  WiFi.mode(WIFI_STA);
+  int n = WiFi.scanNetworks(false, true); // blocking, include hidden
+  Serial.printf("[SCAN] %d networks found\n", n);
+
+  int8_t bestCh    = -1;
+  int    bestRSSI  = -999;
+
+  for (int i = 0; i < n; i++) {
+    String ssid = WiFi.SSID(i);
+    for (int j = 0; j < NUM_KNOWN_SSIDS; j++) {
+      if (ssid == KNOWN_SSIDS[j]) {
+        int rssi = WiFi.RSSI(i);
+        int8_t ch = (int8_t)WiFi.channel(i);
+        Serial.printf("[SCAN]  '%s' ch=%d RSSI=%d\n", KNOWN_SSIDS[j], ch, rssi);
+        if (rssi > bestRSSI) {   // pick strongest signal
+          bestRSSI = rssi;
+          bestCh   = ch;
+        }
+      }
+    }
+  }
+  WiFi.scanDelete();
+
+  if (bestCh == -1) {
+    Serial.println("[SCAN] No known SSID found — defaulting to ch 1");
+    bestCh = 1;
+  } else {
+    Serial.printf("[SCAN] Using channel %d (RSSI %d)\n", bestCh, bestRSSI);
+  }
+  return bestCh;
+}
+
+// ─────────────────────────────────────────────────────────────
 //  ESP-NOW INIT
 // ─────────────────────────────────────────────────────────────
 bool initESPNOW() {
-  WiFi.mode(WIFI_STA);
+  // Auto-detect channel by scanning for known SSIDs
+  int8_t channel = scanForChannel();
+
   WiFi.disconnect();
 
-  // Set channel to match master — critical for ESP-NOW to work
   esp_wifi_set_promiscuous(true);
-  esp_wifi_set_channel(WIFI_CHANNEL, WIFI_SECOND_CHAN_NONE);
+  esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous(false);
 
-  Serial.printf("[ESPNOW] MAC: %s  Channel: %d\n",
-    WiFi.macAddress().c_str(), WIFI_CHANNEL);
+  Serial.printf("[ESPNOW] MAC: %s  Channel: %d (auto)\n",
+    WiFi.macAddress().c_str(), channel);
 
   if (esp_now_init() != ESP_OK) {
     Serial.println("[ESPNOW] Init FAILED");
@@ -239,10 +280,10 @@ bool initESPNOW() {
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
 
-  // Register master as peer
+  // Register master as peer using auto-detected channel
   esp_now_peer_info_t peerInfo = {};
   memcpy(peerInfo.peer_addr, MASTER_MAC, 6);
-  peerInfo.channel = WIFI_CHANNEL;
+  peerInfo.channel = channel;
   peerInfo.encrypt = false;
 
   if (esp_now_add_peer(&peerInfo) != ESP_OK) {
