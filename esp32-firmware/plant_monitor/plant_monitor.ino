@@ -800,6 +800,14 @@ void checkPendingCommand() {
 void setup(){
 
 Serial.begin(115200);
+delay(500);
+
+// ── Print MAC immediately — needed for slave config ──────────────────────
+WiFi.mode(WIFI_STA);
+Serial.println("\n========================================");
+Serial.printf("  MASTER MAC: %s\n", WiFi.macAddress().c_str());
+Serial.println("  (copy this into slave firmware)");
+Serial.println("========================================\n");
 
 // Set relay OFF *before* pinMode — prevents solenoid valve from auto-opening at boot
 digitalWrite(RELAY_PIN, RELAY_OFF); // ensure valve CLOSED (respects RELAY_ACTIVE_LOW flag)
