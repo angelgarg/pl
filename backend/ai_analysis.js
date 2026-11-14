@@ -11,27 +11,10 @@
 const fs = require('fs');
 
 const GEMINI_KEY   = () => process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-1.5-flash-latest';
+const GEMINI_MODEL = 'gemini-2.5-flash';
 const GEMINI_URL   = () =>
   `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY()}`;
 
-// Log available models on startup for diagnostics
-async function logAvailableModels() {
-  if (!GEMINI_KEY()) return;
-  try {
-    const res = await fetch(`https://generativelanguage.googleapis.com/v1/models?key=${GEMINI_KEY()}`);
-    const data = await res.json();
-    if (data.models) {
-      const names = data.models.map(m => m.name).join(', ');
-      console.log('[AI] Available Gemini models:', names);
-    } else {
-      console.log('[AI] ListModels response:', JSON.stringify(data).slice(0, 300));
-    }
-  } catch (e) {
-    console.log('[AI] ListModels error:', e.message);
-  }
-}
-setTimeout(logAvailableModels, 3000);
 
 // Rule-based fallback (when API key not set)
 function ruleBasedDecision(moisture_pct, temperature_c) {
