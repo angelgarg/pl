@@ -27,14 +27,14 @@ app.use(cors({
   origin: true,   // reflect the request origin (allows any origin with credentials)
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret', 'x-device-key'],
   optionsSuccessStatus: 200
 }));
 app.options('*', cors({
   origin: true,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'x-api-secret', 'x-device-key'],
   optionsSuccessStatus: 200
 }));
 
