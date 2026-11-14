@@ -11,9 +11,9 @@
 const fs = require('fs');
 
 const GEMINI_KEY   = () => process.env.GEMINI_API_KEY || '';
-const GEMINI_MODEL = 'gemini-1.5-flash';
+const GEMINI_MODEL = 'gemini-1.5-flash-latest';
 const GEMINI_URL   = () =>
-  `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY()}`;
+  `https://generativelanguage.googleapis.com/v1/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_KEY()}`;
 
 // Rule-based fallback (when API key not set)
 function ruleBasedDecision(moisture_pct, temperature_c) {
@@ -61,7 +61,7 @@ async function callGemini(parts, jsonMode = true) {
     generationConfig: {
       temperature: 0.15,
       maxOutputTokens: 800,
-      ...(jsonMode ? { responseMimeType: 'application/json' } : {})
+      ...(jsonMode ? {} : {})
     }
   };
 
