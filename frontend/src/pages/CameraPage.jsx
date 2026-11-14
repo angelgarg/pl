@@ -63,13 +63,14 @@ export default function CameraPage({ onAddToast, onNavigate }) {
   const handleUpload = async () => {
     if (!file) { onAddToast({ type: 'error', message: 'Pehle photo lo ya select karo' }); return; }
     setUploading(true);
+    onAddToast({ type: 'info', message: '⏳ Backend wake ho raha hai... (30 sec lag sakte hain)' });
     try {
       const result = await api.uploadDevicePhoto(EXHIBIT_DEVICE_KEY, file);
       setAnalysis(result.analysis || result);
-      onAddToast({ type: 'success', message: 'Photo upload ho gayi! Live Monitor pe dikh rahi hai...' });
+      onAddToast({ type: 'success', message: '✅ Photo upload ho gayi! Live Monitor pe dikh rahi hai...' });
       setTimeout(() => onNavigate?.('live'), 2500);
     } catch (err) {
-      onAddToast({ type: 'error', message: err.message });
+      onAddToast({ type: 'error', message: `Upload failed: ${err.message}` });
     } finally {
       setUploading(false);
     }
@@ -127,7 +128,7 @@ export default function CameraPage({ onAddToast, onNavigate }) {
         {/* Upload button */}
         {file && !cameraOpen && (
           <button onClick={handleUpload} disabled={uploading} style={btnStyle(uploading ? '#475569' : '#7c3aed', true)}>
-            {uploading ? '⏳ AI Analysis ho rahi hai...' : '🤖 AI se Analyze Karwao'}
+            {uploading ? '⏳ Backend wake + Analysis ho rahi hai... (30s)' : '🤖 AI se Analyze Karwao'}
           </button>
         )}
 

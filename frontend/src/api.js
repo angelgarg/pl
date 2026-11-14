@@ -207,6 +207,8 @@ export const analyzePlant = async (plantId, imagePath) => {
 
 // Upload photo for a device (manual capture from phone/PC)
 export const uploadDevicePhoto = async (deviceKey, file, sensorData = {}) => {
+  // Wake backend first (Render free tier sleeps after inactivity)
+  await wakeBackend().catch(() => {});
   const { moisture = 50, temperature = 25, humidity = 50 } = sensorData;
   const params = new URLSearchParams({ moisture, temperature, humidity });
   const arrayBuffer = await file.arrayBuffer();
@@ -220,7 +222,7 @@ export const uploadDevicePhoto = async (deviceKey, file, sensorData = {}) => {
   });
   if (!res.ok) {
     const err = await res.json().catch(() => ({}));
-    throw new Error(err.error || 'Upload failed');
+    throw new Error(err.error || `Server error ${res.status}`);
   }
   return res.json();
 };
