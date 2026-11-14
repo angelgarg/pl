@@ -205,6 +205,26 @@ export const analyzePlant = async (plantId, imagePath) => {
   return res.json();
 };
 
+// Upload photo for a device (manual capture from phone/PC)
+export const uploadDevicePhoto = async (deviceKey, file, sensorData = {}) => {
+  const { moisture = 50, temperature = 25, humidity = 50 } = sensorData;
+  const params = new URLSearchParams({ moisture, temperature, humidity });
+  const arrayBuffer = await file.arrayBuffer();
+  const res = await fetch(`${BASE_URL}/api/device-report?${params}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'image/jpeg',
+      'x-device-key': deviceKey,
+    },
+    body: arrayBuffer,
+  });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || 'Upload failed');
+  }
+  return res.json();
+};
+
 // ── Device / Live Monitor endpoints ─────────────────────────
 
 export const getDeviceLatest = async () => {

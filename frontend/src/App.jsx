@@ -198,7 +198,7 @@ function AppInner() {
         )}
 
         {currentPage === 'camera' && (
-          <CameraPage onAddToast={addToast} />
+          <CameraPage onAddToast={addToast} onNavigate={setCurrentPage} />
         )}
 
         {currentPage === 'settings' && (
